@@ -150,10 +150,13 @@ function parseEsquadriasSummary(rows, fileName){
   const result=[];
   const STATUS_MAP={ S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E" };
 
+  // Encontra linha com "TOTAL TORRE"
   const headIdx=rows.findIndex(r=>r.join(" ").match(/TOTAL TORRE/i));
   if(headIdx===-1) return null;
 
   const headRow=rows[headIdx];
+
+  // Mapeia cada torre para sua coluna exata
   const torresCols=[];
   headRow.forEach((cell,ci)=>{
     const m=san(fix(cell)).match(/TOTAL TORRE\s+([A-D])/i);
@@ -161,17 +164,29 @@ function parseEsquadriasSummary(rows, fileName){
   });
   if(!torresCols.length) return null;
 
+  // Para cada torre, acha a coluna exata do número:
+  // o número fica NA MESMA coluna do cabeçalho "TOTAL TORRE X"
+  // ou nas próximas colunas não-vazias — mas só até a próxima torre
   for(let i=headIdx+1;i<Math.min(headIdx+10,rows.length);i++){
     const r=rows[i];
-    const statusCell=san(r[0])||san(r[1]);
+
+    // Pega status da col 0
+    const statusCell=san(r[0]);
     const status=STATUS_MAP[statusCell];
     if(!status) continue;
-    torresCols.forEach(({torre,col})=>{
+
+    torresCols.forEach(({torre,col},ti)=>{
+      // Limite direito: coluna da próxima torre (ou fim da linha)
+      const maxCol = ti+1<torresCols.length ? torresCols[ti+1].col : col+8;
+
+      // Pega TODOS os números entre col e maxCol e soma
+      // (alguns CSVs têm o número logo na col, outros uma ou duas à direita)
       let val=0;
-      for(let x=col;x<col+6;x++){
+      for(let x=col;x<maxCol;x++){
         const n=parseInt(san(r[x]));
-        if(!isNaN(n)&&n>0){ val=n; break; }
+        if(!isNaN(n)) val+=n;
       }
+
       for(let k=0;k<val;k++){
         result.push({ tipo:"esquadrias", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
       }
