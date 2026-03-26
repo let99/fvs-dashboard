@@ -480,8 +480,7 @@ export default function App(){
   const [fvsTab, setFvsTab]           = useState("ceramica");
   const [torreFilter, setTorreFilter] = useState("TODAS");
   const [fvsTorreFilter, setFvsTorreFilter] = useState("TODAS");
-  const [aiText, setAiText]           = useState("");
-  const [aiLoading, setAiLoading]     = useState(false);
+
 
   const handleFile = useCallback(async e=>{
     const files=Array.from(e.target.files||[]);
@@ -544,23 +543,9 @@ export default function App(){
   const fvsScopedRows=useMemo(()=>fvsTorreFilter==="TODAS"?fvsRows:fvsRows.filter(r=>r.torre===fvsTorreFilter),[fvsRows,fvsTorreFilter]);
   const fvsCurrent=useMemo(()=>calcFvs(fvsScopedRows,fvsTab),[fvsScopedRows,fvsTab]);
 
-  async function runAI(){
-    setAiLoading(true); setAiText("");
-    const sumario=`SHAFTS: ${shaftAberto}/${shaftTotal}\nCAPIAÇOS: ${capProb}/${capTotal}\nPASSANTES: ${passProb}/${passTotal}\nESQUADRIAS: ${esqInst}/${esqTotal}\nFVS: ${fvsRows.length} registros`;
-    try{
-      const res=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-        system:"Você é especialista em qualidade de obras. Analise os dados e gere relatório executivo em português com: 1) Situação geral, 2) Torres críticas, 3) Pendências, 4) Recomendações.",
-        messages:[{role:"user",content:`Dados:\n\n${sumario}`}]
-      })});
-      const data=await res.json();
-      if(data.error) setAiText(`Erro: ${data.error}`);
-      else if(!data.content) setAiText(`Resposta inesperada:\n${JSON.stringify(data,null,2)}`);
-      else setAiText(data.content.filter(c=>c.type==="text").map(c=>c.text).join("\n")||"Sem texto.");
-    }catch(err){ setAiText(`Erro: ${err.message}`); }
-    setAiLoading(false);
-  }
 
-  const MAIN_TABS=[{id:"planilhas",label:"📊 Planilhas"},{id:"fvs",label:"📋 FVS"},{id:"ia",label:"🤖 Análise IA"}];
+
+  const MAIN_TABS=[{id:"planilhas",label:"📊 Planilhas"},{id:"fvs",label:"📋 FVS"}];
   const PLAN_TABS=[{id:"shafts",label:"🔲 Shafts"},{id:"capiacos",label:"🏗 Capiaços"},{id:"passantes",label:"🔧 Passantes"},{id:"esquadrias",label:"🪟 Esquadrias"}];
 
   const selStyle={background:"#0f172a",color:C.white,border:`1px solid ${C.border}`,borderRadius:7,padding:"7px 11px",fontSize:12};
@@ -660,14 +645,7 @@ export default function App(){
           {fvsRows.length===0&&<div style={{textAlign:"center",padding:"40px",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>📋</div><div>Carregue os arquivos DOCX das FVS.</div><div style={{fontSize:12,marginTop:6}}>Ex: FVS.10_REVESTIMENTO CERÂMICO_602_A.docx</div></div>}
         </>}
 
-        {/* ── IA ── */}
-        {mainTab==="ia"&&(
-          <Box title="🤖 Análise Automática por IA" action={<Btn onClick={runAI}>{aiLoading?"Analisando...":"Gerar Análise"}</Btn>}>
-            {!aiText&&!aiLoading&&<p style={{color:C.muted,fontSize:13}}>Carregue os arquivos e clique em "Gerar Análise".</p>}
-            {aiLoading&&<div style={{color:C.accent,padding:"16px 0",fontSize:13}}>⏳ Gerando análise inteligente...</div>}
-            {aiText&&<pre style={{whiteSpace:"pre-wrap",wordBreak:"break-word",fontSize:13,lineHeight:1.7,color:"#e2e8f0",margin:0}}>{aiText}</pre>}
-          </Box>
-        )}
+
 
       </div>
     </div>
