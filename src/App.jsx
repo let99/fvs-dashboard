@@ -143,44 +143,69 @@ function parsePassantes(rows, fileName){
 function parseEsquadrias(rows, fileName){
   const result=[];
   const STATUS_VALIDOS=new Set(["E","I","F","C","P.U","S","D"]);
+  const isApto  = v => /^\d{3,4}$|^t[eé]rreo$/i.test(san(v));
+  const isTorre = v => /^[A-D]$/i.test(san(v));
 
-  // Varre todas as linhas buscando cabeçalhos APTO+TORRE em qualquer coluna
-  // Cada linha pode ter DOIS blocos lado a lado (ex: torres A e B na mesma linha)
-  const headerIdxs=[];
-  rows.forEach((r,i)=>{
-    // Encontra todas as ocorrências de "APTO" na linha
-    r.forEach((cell,ci)=>{
-      if(!/^apto$/i.test(cell)) return;
-      // Verifica se a coluna seguinte é TORRE
-      const torreOff=r.slice(ci+1,ci+4).findIndex(c=>/^torre$/i.test(c));
-      if(torreOff===-1) return;
-      const torreCol=ci+1+torreOff;
-      headerIdxs.push({ lineIdx:i, aptoCol:ci, torreCol });
-    });
-  });
+  // Detecta todos os blocos de cabeçalho na mesma linha
+  // Bloco = { aptoCol, torreCol, ambStart, ambEnd, headers }
+  function detectBlocos(hRow){
+    const blocos=[];
+    let ci=0;
+    while(ci<hRow.length){
+      const cell=san(hRow[ci]);
+      // Cabeçalho pode ser "APTO" explícito OU célula vazia/espaço seguida de "TORRE"
+      const isAptoCell = /^apto$/i.test(cell);
+      const isEmptyBeforeTorre = cell==="" && ci+1<hRow.length && /^torre$/i.test(san(hRow[ci+1]));
+      if(isAptoCell||isEmptyBeforeTorre){
+        const aptoCol=ci;
+        const torreCol= isAptoCell
+          ? (san(hRow[ci+1])==="TORRE"?ci+1:ci+1)  // APTO, TORRE na sequência
+          : ci+1;                                    // vazio, TORRE
+        const ambStart=torreCol+1;
+        // ambEnd = próximo bloco (próximo APTO ou célula vazia+TORRE) ou col 50 (limite)
+        let ambEnd=hRow.length;
+        for(let x=ambStart+1;x<hRow.length;x++){
+          const cx=san(hRow[x]);
+          const cx1=x+1<hRow.length?san(hRow[x+1]):"";
+          if(/^apto$/i.test(cx)||(cx===""&&/^torre$/i.test(cx1))){
+            ambEnd=x; break;
+          }
+        }
+        const headers=hRow.slice(ambStart,ambEnd).map(h=>san(fix(h)));
+        blocos.push({ aptoCol, torreCol, ambStart, ambEnd, headers });
+        ci=ambEnd;
+      } else {
+        ci++;
+      }
+    }
+    return blocos;
+  }
 
-  for(const {lineIdx, aptoCol, torreCol} of headerIdxs){
-    const hRow=rows[lineIdx];
-    const ambStart=torreCol+1;
+  // Encontra linhas de cabeçalho (contêm TORRE e pelo menos 3 colunas de ambientes)
+  const headerLines=rows.reduce((acc,r,i)=>{
+    const hasTorre=r.some(c=>/^torre$/i.test(san(c)));
+    const hasAmb  =r.filter(c=>san(c).length>2&&!/^apto$|^torre$/i.test(san(c))).length>=3;
+    if(hasTorre&&hasAmb) acc.push(i);
+    return acc;
+  },[]);
 
-    // Coleta headers até a próxima ocorrência de "APTO" ou fim da linha
-    const nextApto=hRow.findIndex((c,i)=>i>torreCol&&/^apto$/i.test(c));
-    const ambEnd=nextApto===-1?hRow.length:nextApto;
-    const headers=hRow.slice(ambStart,ambEnd).map(h=>san(fix(h)));
+  for(const hi of headerLines){
+    const blocos=detectBlocos(rows[hi]);
+    if(!blocos.length) continue;
 
-    // Lê linhas de dados até próximo cabeçalho ou linha vazia
-    for(let i=lineIdx+1;i<rows.length;i++){
+    for(let i=hi+1;i<rows.length;i++){
       const r=rows[i];
-      const apto=san(r[aptoCol]);
-      const torre=san(r[torreCol]);
-      if(!apto||!/^\d{3,4}$|^t[eé]rreo$/i.test(apto)) continue;
-      if(!torre||torre.length>3) continue; // torre é letra única ex: A,B,C,D
-      headers.forEach((amb,j)=>{
-        const val=san(r[ambStart+j]);
-        // só registra se for status válido de esquadria
-        if(!val||!STATUS_VALIDOS.has(val)) return;
-        result.push({ tipo:"esquadrias", torre, apto, pav:pav(apto), ambiente:fix(amb), status:val, fonte:fileName });
-      });
+      for(const b of blocos){
+        const apto =san(r[b.aptoCol]);
+        const torre=san(r[b.torreCol]);
+        if(!apto||!isApto(apto)) continue;
+        if(!torre||!isTorre(torre)) continue;
+        b.headers.forEach((amb,j)=>{
+          const val=san(r[b.ambStart+j]);
+          if(!val||!STATUS_VALIDOS.has(val)) return;
+          result.push({ tipo:"esquadrias", torre:torre.toUpperCase(), apto, pav:pav(apto), ambiente:fix(amb), status:val, fonte:fileName });
+        });
+      }
     }
   }
   return result;
