@@ -32,43 +32,47 @@ function parseCSVLines(text){
 
 // ─── Detecção de tipo ──────────────────────────────────────────────────────
 function detectTipo(fileName, rows){
-  const head = rows.slice(0,6).flat().join(" ").toLowerCase();
+  const head = rows.slice(0,8).flat().join(" ").toLowerCase();
   const fn   = fileName.toLowerCase();
-  if (/shaft/i.test(fn)||/shaft/i.test(head))                 return "shaft";
-  if (/capiaç|capiac/i.test(fn)||/capiaç|capiac/i.test(head)) return "capiacos";
-  if (/passante/i.test(fn)||/passante/i.test(head))            return "passantes";
-  if (/esquadria/i.test(fn)||/esquadria/i.test(head))          return "esquadrias";
-  if (/cerâmica|ceramica|varanda/i.test(fn))                   return "ceramica";
+  // Nome do arquivo tem prioridade (mais confiável)
+  if (/shaft/i.test(fn))    return "shaft";
+  if (/capiaç|capiac/i.test(fn)) return "capiacos";
+  if (/passante/i.test(fn)) return "passantes";
+  if (/esquadria/i.test(fn)) return "esquadrias";
+  if (/cerâmica|ceramica|varanda/i.test(fn)) return "ceramica";
+  // Fallback por conteúdo (padrões específicos)
+  if (/mapeamento.*shaft|shaft.*mapeamento/i.test(head)) return "shaft";
+  if (/verifica.*capiaç|capiaç.*verifica/i.test(head))  return "capiacos";
+  if (/verifica.*passante|passante.*verifica/i.test(head)) return "passantes";
+  if (/serviço.*esquadria|esquadria.*serviço|precedente.*esquadria/i.test(head)) return "esquadrias";
+  if (/passante/i.test(head)) return "passantes";
+  if (/esquadria/i.test(head)) return "esquadrias";
+  if (/capiaç|capiac/i.test(head)) return "capiacos";
+  if (/shaft/i.test(head)) return "shaft";
   return "generico";
 }
 
 // ─── Helper: parser de resumo genérico (LEGENDA × TORRE A/B/C/D) ──────────
-// Usado por esquadrias E passantes
 function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
   const result=[];
-
   const headIdx=rows.findIndex(r=>headerPattern.test(r.join(" ")));
   if(headIdx===-1) return null;
-
   const headRow=rows[headIdx];
   const torresCols=[];
   headRow.forEach((cell,ci)=>{
-    // aceita "TOTAL TORRE A" ou "TORRE A"
     const m=san(fix(cell)).match(/(?:TOTAL\s+)?TORRE\s+([A-D])$/i);
     if(m) torresCols.push({ torre:m[1].toUpperCase(), col:ci });
   });
   if(!torresCols.length) return null;
-
   for(let i=headIdx+1;i<Math.min(headIdx+12,rows.length);i++){
     const r=rows[i];
     const statusCell=san(r[0]);
     if(/^apto$|^total$/i.test(statusCell)) break;
     const status=statusMap[statusCell];
     if(!status) continue;
-
     torresCols.forEach(({torre,col},ti)=>{
       const nextCol=ti+1<torresCols.length?torresCols[ti+1].col:col+4;
-      const windowEnd=Math.min(col+3, nextCol);
+      const windowEnd=Math.min(col+3,nextCol);
       let val=0;
       for(let x=col;x<windowEnd;x++){
         const n=parseInt(san(r[x]));
@@ -127,7 +131,13 @@ function parseShafts(rows, fileName){
 }
 
 // ─── PARSER CAPIAÇOS ──────────────────────────────────────────────────────
+const CAP_STATUS_MAP={ Q:"Q", N:"N", "Q.I":"Q.I", F:"F", OK:"OK", "N/V":"N/V" };
+
 function parseCapiacos(rows, fileName){
+  // Tenta resumo primeiro
+  const summary=parseSummaryByTorre(rows, fileName, "capiacos", CAP_STATUS_MAP, /TORRE\s+[A-D]/i);
+  if(summary) return summary;
+  // Fallback: linha a linha
   const result=[];
   const headerIdx=rows.findIndex(r=>{
     const aptoI=r.findIndex(c=>/^apto$/i.test(c));
@@ -159,10 +169,8 @@ const PASS_STATUS_MAP={ R:"R", C:"C", OK:"OK", Q:"Q", "N/V":"N/V", P:"P", F:"F",
 const PASS_AMBIENTES=["VARANDA","COZINHA","BWC SERVIÇO","BWC SUÍTE 01 E 02","BWC SUÍTE 03","BWC SUÍTE MASTER","ÁREA DE SERVIÇO","LAVABO"];
 
 function parsePassantes(rows, fileName){
-  // Tenta resumo primeiro (linha com TORRE A, TORRE B sem "TOTAL")
   const summary=parseSummaryByTorre(rows, fileName, "passantes", PASS_STATUS_MAP, /TORRE\s+[AB]/i);
   if(summary) return summary;
-
   // Fallback: linha a linha
   const result=[];
   const headerIdxs=rows.reduce((acc,r,i)=>{
@@ -544,10 +552,9 @@ export default function App(){
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.white,padding:"28px 20px",fontFamily:"'Inter',Arial,sans-serif"}}>
       <div style={{maxWidth:1280,margin:"0 auto"}}>
-
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{background:"#082f49",color:C.accent,borderRadius:999,padding:"3px 12px",fontSize:12,fontWeight:"bold"}}>FVS Qualidade</span>
-          <span style={{color:C.muted,fontSize:12}}>v3.1 — Multi-serviço</span>
+          <span style={{color:C.muted,fontSize:12}}>v3.2 — Multi-serviço</span>
         </div>
         <h1 style={{fontSize:32,margin:"0 0 4px",color:C.white}}>Dashboard de Verificação de Serviços</h1>
         <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Cerâmica</p>
