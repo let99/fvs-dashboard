@@ -619,10 +619,10 @@ export default function App(){
             <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`}}>
               {PLAN_TABS.map(t=>(<button key={t.id} onClick={()=>setPlanTab(t.id)} style={{background:planTab===t.id?C.blue:"transparent",color:planTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:planTab===t.id?"bold":"normal",fontSize:13}}>{t.label}</button>))}
             </div>
-            {planTab==="shafts"&&<><Box title="Distribuição — Shafts"><BarChart counts={shaftData.counts} labels={CLASS.shaft.labels} colors={CLASS.shaft.colors}/></Box><Box title="Por Torre"><TabelaTorre data={shaftData}/></Box><Box title="Por Apartamento"><TabelaApto data={shaftData}/></Box></>}
-            {planTab==="capiacos"&&<><Box title="Distribuição — Capiaços"><BarChart counts={capData.counts} labels={CLASS.capiacos.labels} colors={CLASS.capiacos.colors}/></Box><Box title="Por Torre"><TabelaTorre data={capData}/></Box><Box title="Por Apartamento"><TabelaApto data={capData}/></Box></>}
-            {planTab==="passantes"&&<><Box title="Distribuição — Passantes"><BarChart counts={passData.counts} labels={CLASS.passantes.labels} colors={CLASS.passantes.colors}/></Box><Box title="Por Torre"><TabelaTorre data={passData}/></Box><Box title="Por Apartamento"><TabelaApto data={passData}/></Box></>}
-            {planTab==="esquadrias"&&<><Box title="Distribuição — Esquadrias"><BarChart counts={esqData.counts} labels={CLASS.esquadrias.labels} colors={CLASS.esquadrias.colors}/></Box><Box title="Por Torre"><TabelaTorre data={esqData}/></Box><Box title="Por Apartamento"><TabelaApto data={esqData}/></Box></>}
+            {planTab==="shafts"&&<><Box title={`Distribuição — Shafts — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><BarChart counts={shaftData.counts} labels={CLASS.shaft.labels} colors={CLASS.shaft.colors}/></Box><Box title={`Por Torre — Shafts`}><TabelaTorre data={shaftData}/></Box><Box title={`Por Apartamento — Shafts — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><TabelaApto data={shaftData}/></Box></>}
+            {planTab==="capiacos"&&<><Box title={`Distribuição — Capiaços — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><BarChart counts={capData.counts} labels={CLASS.capiacos.labels} colors={CLASS.capiacos.colors}/></Box><Box title={`Por Torre — Capiaços`}><TabelaTorre data={capData}/></Box><Box title={`Por Apartamento — Capiaços — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><TabelaApto data={capData}/></Box></>}
+            {planTab==="passantes"&&<><Box title={`Distribuição — Passantes — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><BarChart counts={passData.counts} labels={CLASS.passantes.labels} colors={CLASS.passantes.colors}/></Box><Box title={`Por Torre — Passantes`}><TabelaTorre data={passData}/></Box><Box title={`Por Apartamento — Passantes — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><TabelaApto data={passData}/></Box></>}
+            {planTab==="esquadrias"&&<><Box title={`Distribuição — Esquadrias — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><BarChart counts={esqData.counts} labels={CLASS.esquadrias.labels} colors={CLASS.esquadrias.colors}/></Box><Box title={`Por Torre — Esquadrias`}><TabelaTorre data={esqData}/></Box><Box title={`Por Apartamento — Esquadrias — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><TabelaApto data={esqData}/></Box></>}
           </>}
           {allRows.length===0&&<div style={{textAlign:"center",padding:"40px",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>📊</div><div>Carregue os arquivos CSV/XLSX das planilhas de verificação.</div></div>}
         </>}
@@ -650,10 +650,10 @@ export default function App(){
               <KPI label="Aprovações (A)" value={fvsCurrent.totA} sub="verificações aprovadas" color={C.ok}/>
               <KPI label="Reprovações (R)" value={fvsCurrent.totR} sub="verificações reprovadas" color={fvsCurrent.totR>0?C.bad:C.ok}/>
             </div>
-            <Box title={`Pareto de critérios — ${FVS_SERVICO_LABELS[fvsTab]}`}>
+            <Box title={`Pareto de critérios — ${FVS_SERVICO_LABELS[fvsTab]} — ${fvsTorreFilter==="TODAS"?"Todas as torres":`Torre ${fvsTorreFilter}`}`}>
               {fvsCurrent.pareto.length?<ParetoFvs pareto={fvsCurrent.pareto}/>:<p style={{color:C.muted}}>Sem dados suficientes.</p>}
             </Box>
-            <Box title={`Resultado por apartamento — ${FVS_SERVICO_LABELS[fvsTab]}`}>
+            <Box title={`Resultado por apartamento — ${FVS_SERVICO_LABELS[fvsTab]} — ${fvsTorreFilter==="TODAS"?"Todas as torres":`Torre ${fvsTorreFilter}`}`}>
               <TabelaFvsApto aptoTable={fvsCurrent.aptoTable}/>
             </Box>
           </>}
