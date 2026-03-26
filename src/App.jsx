@@ -15,7 +15,7 @@ const C = {
 };
 const PALETTE = ["#16a34a","#2563eb","#dc2626","#f59e0b","#ea580c","#7c3aed","#0891b2","#0f766e","#b91c1c","#64748b"];
 
-// ─── Helpers gerais ────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 const san     = v => String(v||"").replace(/\s+/g," ").trim();
 const pav     = a => { const m=String(a).match(/\d{3,4}/); return m?`${Math.floor(Number(m[0])/100)}º`:""; };
 const isApto  = v => /^\d{3,4}$|^t[eé]rreo$/i.test(san(v));
@@ -35,12 +35,8 @@ function parseCSVLines(text){
 
 // ─── Extrai torre e apto do nome do arquivo ────────────────────────────────
 function extractTorreApto(fileName){
-  // Ex: "FVS.10_REVESTIMENTO CERÂMICO_R04.docx apto 602 A.docx"
-  // Ex: "FVS.08_CONTRAPISO_802_C_R01_.docx"
-  // Ex: "FVS. PORTA DE MADEIRA.docx 902 D.docx"
   const fn = fileName;
   let apto="", torre="";
-  // Padrão: número 3-4 dígitos seguido de letra A-D
   let m = fn.match(/(\d{3,4})\s*([A-D])(?:\s|\.|_|$)/i);
   if(m){ apto=m[1]; torre=m[2].toUpperCase(); }
   else {
@@ -50,13 +46,13 @@ function extractTorreApto(fileName){
   return { apto, torre };
 }
 
-// ─── Detecta serviço FVS pelo nome do arquivo ──────────────────────────────
+// ─── Detecta serviço FVS ──────────────────────────────────────────────────
 function detectFvsServico(fileName, text){
   const s = (fileName+" "+text).toLowerCase();
-  if (/contrapiso/i.test(s))                          return "contrapiso";
-  if (/porta.*madeira|madeira.*porta/i.test(s))       return "porta";
+  if (/contrapiso/i.test(s))                         return "contrapiso";
+  if (/porta.*madeira|madeira.*porta/i.test(s))      return "porta";
   if (/alumin/i.test(s)||/esquadria.*alum/i.test(s)) return "esquadria_alum";
-  if (/cerâmic|revestimento/i.test(s))                return "ceramica";
+  if (/cerâmic|revestimento/i.test(s))               return "ceramica";
   return null;
 }
 
@@ -76,8 +72,6 @@ const FVS_SERVICO_LABELS = {
 const AMBIENTES_FVS = ["SALA","VARANDA","COZINHA","ÁREA SERV","DEPÓSITO","BWC SERV","LAVABO","SUÍTE 01","BWC SUÍTE 01 E 02","SUÍTE 02","SUÍTE 03","BWC SUÍTE 03","SUÍTE 04","BWC SUÍTE 04"];
 
 // ─── Parser DOCX FVS ──────────────────────────────────────────────────────
-// mammoth extrai tabelas como texto corrido, uma célula por linha
-// O padrão real é: cada linha é uma célula, células em sequência formam a linha da tabela
 function parseFvsDocx(fileName, text){
   const { apto, torre } = extractTorreApto(fileName);
   const servico = detectFvsServico(fileName, text);
@@ -88,59 +82,41 @@ function parseFvsDocx(fileName, text){
   const criterios = FVS_CRITERIOS[servico];
   const VALID = new Set(["A","R","N/V","N/A"]);
 
-  // Divide em tokens: remove bold markers, split por newlines e espaços múltiplos
   const tokens = text
     .replace(/\*\*/g,"")
     .split(/\n/)
     .map(l=>l.trim())
     .filter(Boolean);
 
-  // Encontra índice da linha "SALA" para saber os ambientes
+  // Detecta ambientes a partir da linha "SALA"
   let ambientes = [...AMBIENTES_FVS];
   const salaIdx = tokens.findIndex(t=>/^SALA$/i.test(t));
   if(salaIdx !== -1){
-    // Coleta ambientes até encontrar algo que não seja um ambiente (ex: número "1")
     const amb = [];
     for(let i=salaIdx; i<tokens.length; i++){
       const t = tokens[i].toUpperCase();
-      // Para quando encontra "1" (início dos critérios)
       if(/^\d+$/.test(t)) break;
-      // Ignora tokens vazios ou de controle
       if(t.length > 1 || /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ]/.test(t)) amb.push(tokens[i].toUpperCase());
     }
     if(amb.length >= 3) ambientes = amb;
   }
 
   const rows = [];
-
-  // Procura por número de critério (1,2,3...) seguido de resultados A/R/N/V/N/A
   for(let i=0; i<tokens.length; i++){
     const tok = tokens[i].trim();
     if(!/^\d+$/.test(tok)) continue;
     const numIdx = parseInt(tok)-1;
     if(numIdx < 0 || numIdx >= criterios.length) continue;
     const criterio = criterios[numIdx];
-
-    // Coleta os próximos tokens que sejam resultados válidos
     const resultados = [];
     for(let j=i+1; j<tokens.length && resultados.length < ambientes.length; j++){
       const v = tokens[j].toUpperCase().replace(/\s+/g,"");
-      if(VALID.has(v)){
-        resultados.push(v);
-      } else if(/^\d+$/.test(v)){
-        // Chegou no próximo critério
-        break;
-      } else if(resultados.length > 0 && v.length > 6){
-        // Texto longo = descrição de critério, para
-        break;
-      }
+      if(VALID.has(v)) resultados.push(v);
+      else if(/^\d+$/.test(v)) break;
+      else if(resultados.length > 0 && v.length > 6) break;
     }
-
     for(let k=0; k<resultados.length && k<ambientes.length; k++){
-      rows.push({
-        tipo_doc:"fvs", servico, torre, apto, pav:pav(apto), data,
-        ambiente: ambientes[k], criterio, resultado: resultados[k], fonte: fileName,
-      });
+      rows.push({ tipo_doc:"fvs", servico, torre, apto, pav:pav(apto), data, ambiente:ambientes[k], criterio, resultado:resultados[k], fonte:fileName });
     }
   }
   return rows;
@@ -166,7 +142,7 @@ function detectTipo(fileName, rows){
   return "generico";
 }
 
-// ─── Helper resumo genérico (TORRE A/B/C/D) ────────────────────────────────
+// ─── Helper resumo genérico ────────────────────────────────────────────────
 function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
   const result=[];
   const headIdx=rows.findIndex(r=>headerPattern.test(r.join(" ")));
@@ -192,9 +168,7 @@ function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
         const n=parseInt(san(r[x]));
         if(!isNaN(n)&&n>=0){ val=n; break; }
       }
-      for(let k=0;k<val;k++){
-        result.push({ tipo, torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
-      }
+      for(let k=0;k<val;k++) result.push({ tipo, torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
     });
   }
   return result.length>0?result:null;
@@ -222,11 +196,11 @@ function parseShafts(rows,fileName){
   for(let i=dataStart;i<rows.length;i++){
     const r=rows[i];
     if(!r[0]||!/^\d{3,4}$/.test(r[0])) continue;
-    const apto1=san(r[0]),torre1=san(r[1]);
-    SHAFT_AMBIENTES.forEach((amb,j)=>{ const val=san(r[2+j]); if(!val||val===torre1) return; result.push({tipo:"shaft",torre:torre1,apto:apto1,pav:pav(apto1),ambiente:amb,status:val,fonte:fileName}); });
-    const apto2=san(r[10]),torre2=san(r[11]);
-    if(apto2&&torre2&&/^\d{3,4}$/.test(apto2))
-      SHAFT_AMBIENTES.forEach((amb,j)=>{ const val=san(r[12+j]); if(!val||val===torre2) return; result.push({tipo:"shaft",torre:torre2,apto:apto2,pav:pav(apto2),ambiente:amb,status:val,fonte:fileName}); });
+    const a1=san(r[0]),t1=san(r[1]);
+    SHAFT_AMBIENTES.forEach((amb,j)=>{ const val=san(r[2+j]); if(!val||val===t1) return; result.push({tipo:"shaft",torre:t1,apto:a1,pav:pav(a1),ambiente:amb,status:val,fonte:fileName}); });
+    const a2=san(r[10]),t2=san(r[11]);
+    if(a2&&t2&&/^\d{3,4}$/.test(a2))
+      SHAFT_AMBIENTES.forEach((amb,j)=>{ const val=san(r[12+j]); if(!val||val===t2) return; result.push({tipo:"shaft",torre:t2,apto:a2,pav:pav(a2),ambiente:amb,status:val,fonte:fileName}); });
   }
   return result;
 }
@@ -238,7 +212,7 @@ function parseCapiacos(rows,fileName){
   const result=[];
   const hi=rows.findIndex(r=>r.findIndex(c=>/^apto$/i.test(c))!==-1&&r.findIndex(c=>/^torre$/i.test(c))!==-1);
   if(hi===-1) return result;
-  const h=rows[hi], ac=h.findIndex(c=>/^apto$/i.test(c)), tc=h.findIndex(c=>/^torre$/i.test(c)), as=Math.max(ac,tc)+1;
+  const h=rows[hi],ac=h.findIndex(c=>/^apto$/i.test(c)),tc=h.findIndex(c=>/^torre$/i.test(c)),as=Math.max(ac,tc)+1;
   const headers=h.slice(as).map(fix).filter(Boolean);
   for(let i=hi+1;i<rows.length;i++){
     const r=rows[i]; const a=san(r[ac]),t=san(r[tc]);
@@ -278,7 +252,7 @@ function parseEsquadrias(rows,fileName){
     const blocos=[]; let ci=0;
     while(ci<hRow.length){
       const cell=san(hRow[ci]);
-      const isAp=/^apto$/i.test(cell), isEm=cell===""&&ci+1<hRow.length&&/^torre$/i.test(san(hRow[ci+1]));
+      const isAp=/^apto$/i.test(cell),isEm=cell===""&&ci+1<hRow.length&&/^torre$/i.test(san(hRow[ci+1]));
       if(isAp||isEm){
         const ac=ci,tc=ci+1,as=tc+1; let ae=hRow.length;
         for(let x=as+1;x<hRow.length;x++){
@@ -308,7 +282,7 @@ function parseEsquadrias(rows,fileName){
   return result;
 }
 
-function parseFile(fileName, csvText){
+function parseFile(fileName,csvText){
   const rows=parseCSVLines(csvText);
   const tipo=detectTipo(fileName,rows);
   switch(tipo){
@@ -347,26 +321,22 @@ function calcTipo(rows,tipo){
   };
 }
 
-// ─── Cálculo FVS (DOCX) ────────────────────────────────────────────────────
+// ─── Cálculo FVS ──────────────────────────────────────────────────────────
 function calcFvs(rows, servico){
-  const filtered = rows.filter(r=>r.tipo_doc==="fvs"&&r.servico===servico);
-  // Agrupa por apto
+  const filtered=rows.filter(r=>r.tipo_doc==="fvs"&&r.servico===servico);
   const byApto={};
   filtered.forEach(r=>{
     const key=`${r.torre}-${r.apto}`;
     if(!byApto[key]) byApto[key]={torre:r.torre,apto:r.apto,pav:r.pav,data:r.data,A:0,R:0,NV:0,NA:0,crits:new Set()};
-    const res=r.resultado;
-    if(res==="A") byApto[key].A++;
-    else if(res==="R"){byApto[key].R++;byApto[key].crits.add(r.criterio);}
-    else if(res==="N/V") byApto[key].NV++;
-    else if(res==="N/A") byApto[key].NA++;
+    if(r.resultado==="A") byApto[key].A++;
+    else if(r.resultado==="R"){byApto[key].R++;byApto[key].crits.add(r.criterio);}
+    else if(r.resultado==="N/V") byApto[key].NV++;
+    else if(r.resultado==="N/A") byApto[key].NA++;
   });
   const aptoTable=Object.values(byApto).map(x=>{
     const total=x.A+x.R; const tapi=total?Math.round(x.A/total*100):0;
     return{...x,total:x.A+x.R+x.NV+x.NA,tapi,crits:[...x.crits].slice(0,4).join(", "),status:x.R>0?"REPROVADO":"APROVADO"};
   }).sort((a,b)=>a.torre.localeCompare(b.torre)||Number(a.apto)-Number(b.apto));
-
-  // Pareto de critérios
   const critMap={};
   filtered.forEach(r=>{
     if(!["A","R"].includes(r.resultado)) return;
@@ -374,19 +344,16 @@ function calcFvs(rows, servico){
     critMap[c].t++; if(r.resultado==="R") critMap[c].r++;
   });
   const pareto=Object.entries(critMap).map(([c,v])=>({criterio:c,total:v.t,r:v.r,pct:v.t?Math.round(v.r/v.t*100):0})).sort((a,b)=>b.r-a.r);
-
-  // Totais globais
   const totA=filtered.filter(r=>r.resultado==="A").length;
   const totR=filtered.filter(r=>r.resultado==="R").length;
   const tapi=(totA+totR)?Math.round(totA/(totA+totR)*100):0;
-
   return{aptoTable,pareto,totA,totR,tapi,total:filtered.length};
 }
 
 // ─── Componentes UI ────────────────────────────────────────────────────────
 function BarChart({counts,labels,colors}){
   const entries=Object.entries(counts).filter(([k,v])=>v>0&&labels?.[k]).sort((a,b)=>b[1]-a[1]);
-  const total=entries.reduce((a,[,v])=>a+v,0)||1, maxVal=entries[0]?.[1]||1;
+  const total=entries.reduce((a,[,v])=>a+v,0)||1,maxVal=entries[0]?.[1]||1;
   return(
     <div style={{display:"flex",flexDirection:"column",gap:8}}>
       {entries.map(([k,v],idx)=>{ const color=colors?.[k]||PALETTE[idx%PALETTE.length]; return(
@@ -408,7 +375,7 @@ function ParetoFvs({pareto}){
     <div style={{display:"flex",flexDirection:"column",gap:6}}>
       {pareto.map((p,i)=>(
         <div key={i} style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:200,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{p.criterio}</div>
+          <div style={{width:220,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{p.criterio}</div>
           <div style={{flex:1,background:"#0f172a",borderRadius:4,height:22,position:"relative"}}>
             <div style={{width:`${(p.r/max)*100}%`,background:p.pct>=50?C.bad:p.pct>=25?C.orange:C.ok,height:"100%",borderRadius:4}}/>
             <span style={{position:"absolute",right:8,top:3,fontSize:11,color:C.white,fontWeight:"bold"}}>{p.r} R ({p.pct}%)</span>
@@ -471,9 +438,8 @@ function TabelaTorre({data}){
   </div>);
 }
 
-// Tabela FVS por apto
 function TabelaFvsApto({aptoTable}){
-  if(!aptoTable.length) return <p style={{color:C.muted}}>Nenhum apto carregado ainda. Envie os arquivos DOCX das FVS.</p>;
+  if(!aptoTable.length) return <p style={{color:C.muted}}>Nenhum apto carregado. Envie os arquivos DOCX das FVS.</p>;
   return(<div style={{overflowX:"auto"}}>
     <table style={{width:"100%",borderCollapse:"collapse",minWidth:800}}>
       <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Data"/><TH c="A"/><TH c="R"/><TH c="N/V"/><TH c="N/A"/><TH c="TAPI"/><TH c="Critérios reprovados"/><TH c="Status"/></tr></thead>
@@ -498,17 +464,18 @@ function exportCSV(rows){
   const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="fvs_completo.csv"; a.click(); URL.revokeObjectURL(url);
 }
 
-// ─── App Principal ─────────────────────────────────────────────────────────
+// ─── App ──────────────────────────────────────────────────────────────────
 export default function App(){
   const [allRows, setAllRows]         = useState([]);
   const [fvsRows, setFvsRows]         = useState([]);
-  const [status, setStatus]           = useState("Envie os arquivos CSV/XLSX (planilhas) ou DOCX/PDF (FVS).");
+  const [status, setStatus]           = useState("Envie CSV/XLSX (planilhas) ou DOCX/PDF (FVS).");
   const [fileNames, setFileNames]     = useState([]);
   const [errors, setErrors]           = useState([]);
   const [mainTab, setMainTab]         = useState("planilhas");
   const [planTab, setPlanTab]         = useState("shafts");
   const [fvsTab, setFvsTab]           = useState("ceramica");
   const [torreFilter, setTorreFilter] = useState("TODAS");
+  const [fvsTorreFilter, setFvsTorreFilter] = useState("TODAS");
   const [aiText, setAiText]           = useState("");
   const [aiLoading, setAiLoading]     = useState(false);
 
@@ -535,10 +502,9 @@ export default function App(){
           const buf=await file.arrayBuffer();
           const res=await mammoth.extractRawText({arrayBuffer:buf});
           const text=res.value||"";
-          // Tenta FVS primeiro
           const fvsParsed=parseFvsDocx(file.name,text);
           if(fvsParsed.length) fvs=[...fvs,...fvsParsed];
-          else { const parsed=parseFile(file.name,text); if(parsed.length) planilhas=[...planilhas,...parsed]; else errs.push(`${file.name}: nenhum dado reconhecido.`); }
+          else{ const parsed=parseFile(file.name,text); if(parsed.length) planilhas=[...planilhas,...parsed]; else errs.push(`${file.name}: nenhum dado reconhecido.`); }
         } else if(ext==="pdf"){
           const buf=await file.arrayBuffer();
           const pdf=await pdfjsLib.getDocument({data:buf}).promise;
@@ -551,8 +517,7 @@ export default function App(){
       }catch(err){ console.error(err); errs.push(`${file.name}: erro — ${err.message}`); }
     }
     setAllRows(planilhas); setFvsRows(fvs); setErrors(errs);
-    const total=planilhas.length+fvs.length;
-    setStatus(`${files.length} arquivo(s) processado(s). ${planilhas.length} registros de planilha + ${fvs.length} registros FVS.`);
+    setStatus(`${files.length} arquivo(s) processado(s). ${planilhas.length} registros planilha + ${fvs.length} registros FVS.`);
     if(fvs.length>0&&planilhas.length===0) setMainTab("fvs");
     if(planilhas.length>0&&fvs.length===0) setMainTab("planilhas");
   },[]);
@@ -571,11 +536,13 @@ export default function App(){
   const esqTotal=Object.values(esqData.counts).reduce((a,b)=>a+b,0), esqInst=esqData.counts["E"]||0;
 
   const fvsServicos=["ceramica","contrapiso","porta","esquadria_alum"];
-  const fvsCurrent=useMemo(()=>calcFvs(fvsRows,fvsTab),[fvsRows,fvsTab]);
+  const fvsTorres=useMemo(()=>["TODAS",...[...new Set(fvsRows.map(r=>r.torre).filter(Boolean))].sort()],[fvsRows]);
+  const fvsScopedRows=useMemo(()=>fvsTorreFilter==="TODAS"?fvsRows:fvsRows.filter(r=>r.torre===fvsTorreFilter),[fvsRows,fvsTorreFilter]);
+  const fvsCurrent=useMemo(()=>calcFvs(fvsScopedRows,fvsTab),[fvsScopedRows,fvsTab]);
 
   async function runAI(){
     setAiLoading(true); setAiText("");
-    const sumario=`SHAFTS: ${shaftAberto}/${shaftTotal}\nCAPIAÇOS: ${capProb}/${capTotal}\nPASSANTES: ${passProb}/${passTotal}\nESQUADRIAS: ${esqInst}/${esqTotal}\nFVS carregadas: ${fvsRows.length} registros`;
+    const sumario=`SHAFTS: ${shaftAberto}/${shaftTotal}\nCAPIAÇOS: ${capProb}/${capTotal}\nPASSANTES: ${passProb}/${passTotal}\nESQUADRIAS: ${esqInst}/${esqTotal}\nFVS: ${fvsRows.length} registros`;
     try{
       const res=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
         system:"Você é especialista em qualidade de obras. Analise os dados e gere relatório executivo em português com: 1) Situação geral, 2) Torres críticas, 3) Pendências, 4) Recomendações.",
@@ -592,13 +559,15 @@ export default function App(){
   const MAIN_TABS=[{id:"planilhas",label:"📊 Planilhas"},{id:"fvs",label:"📋 FVS"},{id:"ia",label:"🤖 Análise IA"}];
   const PLAN_TABS=[{id:"shafts",label:"🔲 Shafts"},{id:"capiacos",label:"🏗 Capiaços"},{id:"passantes",label:"🔧 Passantes"},{id:"esquadrias",label:"🪟 Esquadrias"}];
 
+  const selStyle={background:"#0f172a",color:C.white,border:`1px solid ${C.border}`,borderRadius:7,padding:"7px 11px",fontSize:12};
+
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.white,padding:"28px 20px",fontFamily:"'Inter',Arial,sans-serif"}}>
       <div style={{maxWidth:1280,margin:"0 auto"}}>
 
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{background:"#082f49",color:C.accent,borderRadius:999,padding:"3px 12px",fontSize:12,fontWeight:"bold"}}>FVS Qualidade</span>
-          <span style={{color:C.muted,fontSize:12}}>v4.0</span>
+          <span style={{color:C.muted,fontSize:12}}>v4.1</span>
         </div>
         <h1 style={{fontSize:32,margin:"0 0 4px",color:C.white}}>Dashboard de Verificação de Serviços</h1>
         <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Cerâmica · Contrapiso · Portas</p>
@@ -612,9 +581,9 @@ export default function App(){
             </label>
             {(allRows.length>0||fvsRows.length>0)&&<Btn onClick={()=>exportCSV([...allRows,...fvsRows])} color={C.purple}>⬇ Exportar CSV</Btn>}
             {allRows.length>0&&(
-              <div style={{marginLeft:"auto"}}>
-                <span style={{fontSize:11,color:C.muted,marginRight:8}}>TORRE</span>
-                <select value={torreFilter} onChange={e=>setTorreFilter(e.target.value)} style={{background:"#0f172a",color:C.white,border:`1px solid ${C.border}`,borderRadius:7,padding:"7px 11px",fontSize:12}}>
+              <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:11,color:C.muted}}>TORRE</span>
+                <select value={torreFilter} onChange={e=>setTorreFilter(e.target.value)} style={selStyle}>
                   {torres.map(t=><option key={t} value={t}>{t==="TODAS"?"Todas as torres":`Torre ${t}`}</option>)}
                 </select>
               </div>
@@ -626,7 +595,7 @@ export default function App(){
         </div>
 
         {/* Main tabs */}
-        <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`,marginBottom:0}}>
+        <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`}}>
           {MAIN_TABS.map(t=>(
             <button key={t.id} onClick={()=>setMainTab(t.id)} style={{background:mainTab===t.id?C.blue:"transparent",color:mainTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"10px 20px",cursor:"pointer",fontWeight:mainTab===t.id?"bold":"normal",fontSize:14}}>
               {t.label}
@@ -644,9 +613,7 @@ export default function App(){
               <KPI label="Esquadrias Instaladas" value={`${esqInst}/${esqTotal}`} sub={`${esqTotal?Math.round(esqInst/esqTotal*100):0}%`} color={C.blue}/>
             </div>
             <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`}}>
-              {PLAN_TABS.map(t=>(
-                <button key={t.id} onClick={()=>setPlanTab(t.id)} style={{background:planTab===t.id?C.blue:"transparent",color:planTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:planTab===t.id?"bold":"normal",fontSize:13}}>{t.label}</button>
-              ))}
+              {PLAN_TABS.map(t=>(<button key={t.id} onClick={()=>setPlanTab(t.id)} style={{background:planTab===t.id?C.blue:"transparent",color:planTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:planTab===t.id?"bold":"normal",fontSize:13}}>{t.label}</button>))}
             </div>
             {planTab==="shafts"&&<><Box title="Distribuição — Shafts"><BarChart counts={shaftData.counts} labels={CLASS.shaft.labels} colors={CLASS.shaft.colors}/></Box><Box title="Por Torre"><TabelaTorre data={shaftData}/></Box><Box title="Por Apartamento"><TabelaApto data={shaftData}/></Box></>}
             {planTab==="capiacos"&&<><Box title="Distribuição — Capiaços"><BarChart counts={capData.counts} labels={CLASS.capiacos.labels} colors={CLASS.capiacos.colors}/></Box><Box title="Por Torre"><TabelaTorre data={capData}/></Box><Box title="Por Apartamento"><TabelaApto data={capData}/></Box></>}
@@ -658,13 +625,20 @@ export default function App(){
 
         {/* ── FVS ── */}
         {mainTab==="fvs"&&<>
-          <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`,marginTop:0}}>
-            {fvsServicos.map(s=>(
-              <button key={s} onClick={()=>setFvsTab(s)} style={{background:fvsTab===s?C.blue:"transparent",color:fvsTab===s?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:fvsTab===s?"bold":"normal",fontSize:13}}>
-                {FVS_SERVICO_LABELS[s]}
-              </button>
-            ))}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginTop:0,paddingTop:4}}>
+            <div style={{display:"flex",gap:3}}>
+              {fvsServicos.map(s=>(<button key={s} onClick={()=>setFvsTab(s)} style={{background:fvsTab===s?C.blue:"transparent",color:fvsTab===s?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:fvsTab===s?"bold":"normal",fontSize:13}}>{FVS_SERVICO_LABELS[s]}</button>))}
+            </div>
+            {fvsRows.length>0&&(
+              <div style={{display:"flex",alignItems:"center",gap:8,paddingBottom:4}}>
+                <span style={{fontSize:11,color:C.muted}}>TORRE</span>
+                <select value={fvsTorreFilter} onChange={e=>setFvsTorreFilter(e.target.value)} style={selStyle}>
+                  {fvsTorres.map(t=><option key={t} value={t}>{t==="TODAS"?"Todas as torres":`Torre ${t}`}</option>)}
+                </select>
+              </div>
+            )}
           </div>
+          <div style={{borderBottom:`1px solid ${C.border}`,marginBottom:0}}/>
           {fvsRows.length>0&&<>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:14,marginTop:20,marginBottom:4}}>
               <KPI label="Aptos inspecionados" value={fvsCurrent.aptoTable.length} sub={FVS_SERVICO_LABELS[fvsTab]} color={C.accent}/>
@@ -679,13 +653,13 @@ export default function App(){
               <TabelaFvsApto aptoTable={fvsCurrent.aptoTable}/>
             </Box>
           </>}
-          {fvsRows.length===0&&<div style={{textAlign:"center",padding:"40px",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>📋</div><div>Carregue os arquivos DOCX das FVS.<br/><span style={{fontSize:12,marginTop:6,display:"block"}}>Ex: FVS.10_REVESTIMENTO CERÂMICO_602_A.docx</span></div></div>}
+          {fvsRows.length===0&&<div style={{textAlign:"center",padding:"40px",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>📋</div><div>Carregue os arquivos DOCX das FVS.</div><div style={{fontSize:12,marginTop:6}}>Ex: FVS.10_REVESTIMENTO CERÂMICO_602_A.docx</div></div>}
         </>}
 
         {/* ── IA ── */}
         {mainTab==="ia"&&(
           <Box title="🤖 Análise Automática por IA" action={<Btn onClick={runAI}>{aiLoading?"Analisando...":"Gerar Análise"}</Btn>}>
-            {!aiText&&!aiLoading&&<p style={{color:C.muted,fontSize:13}}>Carregue os arquivos e clique em "Gerar Análise" para obter um relatório executivo com diagnóstico e recomendações.</p>}
+            {!aiText&&!aiLoading&&<p style={{color:C.muted,fontSize:13}}>Carregue os arquivos e clique em "Gerar Análise".</p>}
             {aiLoading&&<div style={{color:C.accent,padding:"16px 0",fontSize:13}}>⏳ Gerando análise inteligente...</div>}
             {aiText&&<pre style={{whiteSpace:"pre-wrap",wordBreak:"break-word",fontSize:13,lineHeight:1.7,color:"#e2e8f0",margin:0}}>{aiText}</pre>}
           </Box>
