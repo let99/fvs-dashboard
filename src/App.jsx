@@ -474,8 +474,14 @@ export default function App(){
         })
       });
       const data=await res.json();
-      setAiText(data.content?.filter(c=>c.type==="text").map(c=>c.text).join("\n")||"Sem resposta.");
-    }catch(err){ setAiText(`Erro: ${err.message}`); }
+      // debug: mostra resposta bruta se não vier conteúdo
+      if(!data.content){
+        setAiText(`Resposta inesperada da API:\n${JSON.stringify(data, null, 2)}`);
+      } else {
+        const text=data.content.filter(c=>c.type==="text").map(c=>c.text).join("\n");
+        setAiText(text||`Sem texto no content:\n${JSON.stringify(data.content, null, 2)}`);
+      }
+    }catch(err){ setAiText(`Erro: ${err.message}\n${err.stack||""}`); }
     setAiLoading(false);
   }
 
