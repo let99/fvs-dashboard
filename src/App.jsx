@@ -439,7 +439,7 @@ export default function App(){
     setAiLoading(true); setAiText("");
     const sumario=`SHAFTS: ${shaftAberto}/${shaftTotal} abertos\nPor status: ${JSON.stringify(shaftData.counts)}\nCAPIAÇOS: ${capProb} problemas de ${capTotal}\nPor status: ${JSON.stringify(capData.counts)}\nPASSANTES: ${passProb} problemas de ${passTotal}\nPor status: ${JSON.stringify(passData.counts)}\nESQUADRIAS: ${esqInst}/${esqTotal} instaladas\nPor status: ${JSON.stringify(esqData.counts)}\nPor torre Shafts: ${JSON.stringify(shaftData.byTorre.map(t=>({torre:t.torre,...t.counts})))}\nPor torre Capiaços: ${JSON.stringify(capData.byTorre.map(t=>({torre:t.torre,...t.counts})))}\nPor torre Passantes: ${JSON.stringify(passData.byTorre.map(t=>({torre:t.torre,...t.counts})))}\nPor torre Esquadrias: ${JSON.stringify(esqData.byTorre.map(t=>({torre:t.torre,...t.counts})))}`;
     try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
+      const res=await fetch("/api/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
