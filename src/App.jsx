@@ -233,9 +233,9 @@ const CLASS = {
     colors:{ OK:"#16a34a", R:"#dc2626", C:"#f59e0b", Q:"#b91c1c", P:"#ea580c", F:"#7c3aed", S:"#0891b2", "N/V":"#94a3b8" },
   },
   esquadrias:{
-    ok:["E"], warn:["I","C","P.U","S"], na:[],
-    labels:{ E:"Instalada", I:"Pronto p/ instalar", C:"Falta contramarco", "P.U":"P.U incompleto", S:"Contramarco sujo" },
-    colors:{ E:"#16a34a", I:"#2563eb", C:"#f59e0b", "P.U":"#ea580c", S:"#64748b" },
+    ok:["E"], warn:["I","F","C","P.U","S"], na:[],
+    labels:{ E:"Instalada", I:"Pronto p/ instalar", F:"Falta rejunte/fachada", C:"Falta contramarco", "P.U":"P.U incompleto", S:"Contramarco sujo" },
+    colors:{ E:"#16a34a", I:"#2563eb", F:"#dc2626", C:"#f59e0b", "P.U":"#ea580c", S:"#64748b" },
   },
 };
 
