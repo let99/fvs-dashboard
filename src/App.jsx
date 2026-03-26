@@ -86,15 +86,25 @@ function parseShafts(rows, fileName){
 
 function parseCapiacos(rows, fileName){
   const result=[];
-  const headerIdx=rows.findIndex(r=>r[1]&&/apto/i.test(r[1])&&r[2]&&/torre/i.test(r[2]));
+  const headerIdx=rows.findIndex(r=>{
+    const aptoI=r.findIndex(c=>/^apto$/i.test(c));
+    const torrI=r.findIndex(c=>/^torre$/i.test(c));
+    return aptoI!==-1&&torrI!==-1;
+  });
   if(headerIdx===-1) return result;
-  const headers=rows[headerIdx].slice(3).map(fix).filter(Boolean);
+  const hRow=rows[headerIdx];
+  const aptoCol=hRow.findIndex(c=>/^apto$/i.test(c));
+  const torreCol=hRow.findIndex(c=>/^torre$/i.test(c));
+  const ambStart=Math.max(aptoCol,torreCol)+1;
+  const headers=hRow.slice(ambStart).map(fix).filter(Boolean);
+
   for(let i=headerIdx+1;i<rows.length;i++){
     const r=rows[i];
-    if(!r[1]||!/^\d{3,4}$/.test(r[1])) continue;
-    const apto=san(r[1]), torre=san(r[2]);
+    const apto=san(r[aptoCol]), torre=san(r[torreCol]);
+    if(!apto||!/^\d{3,4}$|^t[eé]rreo$/i.test(apto)) continue;
+    if(!torre) continue;
     headers.forEach((amb,j)=>{
-      const val=san(r[3+j]);
+      const val=san(r[ambStart+j]);
       if(!val) return;
       result.push({ tipo:"capiacos", torre, apto, pav:pav(apto), ambiente:amb, status:val, fonte:fileName });
     });
@@ -132,15 +142,37 @@ function parsePassantes(rows, fileName){
 
 function parseEsquadrias(rows, fileName){
   const result=[];
-  const headerIdxs=rows.reduce((acc,r,i)=>{ if(r[0]&&/apto/i.test(r[0])&&r[1]&&/torre/i.test(r[1])) acc.push(i); return acc; },[]);
+
+  // Encontra todos os blocos que começam com linha de cabeçalho APTO + TORRE
+  // O CSV de esquadrias pode ter cabeçalho na col 0 (" ,TORRE,...") ou col 0 vazia
+  const headerIdxs=rows.reduce((acc,r,i)=>{
+    const flat=r.join(" ").toLowerCase();
+    // aceita cabeçalho com apto/torre em qualquer das primeiras 3 colunas
+    const hasApto = r.slice(0,3).some(c=>/^apto$/i.test(c));
+    const hasTorre= r.slice(0,3).some(c=>/^torre$/i.test(c));
+    if(hasApto&&hasTorre) acc.push(i);
+    return acc;
+  },[]);
+
   for(const hi of headerIdxs){
-    const headers=rows[hi].slice(2).map(h=>san(fix(h)));
+    const hRow=rows[hi];
+    // descobre índice das colunas apto e torre
+    const aptoCol = hRow.findIndex(c=>/^apto$/i.test(c));
+    const torreCol= hRow.findIndex(c=>/^torre$/i.test(c));
+    if(aptoCol===-1||torreCol===-1) continue;
+    // ambientes: tudo depois da coluna torre
+    const ambStart= Math.max(aptoCol,torreCol)+1;
+    const headers = hRow.slice(ambStart).map(h=>san(fix(h)));
+
     for(let i=hi+1;i<rows.length;i++){
       const r=rows[i];
-      if(!r[0]||!/^\d{3,4}$/.test(r[0])) continue;
-      const apto=san(r[0]), torre=san(r[1]);
+      const apto = san(r[aptoCol]);
+      const torre= san(r[torreCol]);
+      // linha de dado: apto deve ser número 3-4 dígitos OU "TÉRREO"
+      if(!apto||!/^\d{3,4}$|^t[eé]rreo$/i.test(apto)) continue;
+      if(!torre) continue;
       headers.forEach((amb,j)=>{
-        const val=san(r[2+j]);
+        const val=san(r[ambStart+j]);
         if(!val) return;
         result.push({ tipo:"esquadrias", torre, apto, pav:pav(apto), ambiente:amb, status:val, fonte:fileName });
       });
