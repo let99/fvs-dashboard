@@ -75,51 +75,71 @@ const FVS_SERVICO_LABELS = {
 
 const AMBIENTES_FVS = ["SALA","VARANDA","COZINHA","ÁREA SERV","DEPÓSITO","BWC SERV","LAVABO","SUÍTE 01","BWC SUÍTE 01 E 02","SUÍTE 02","SUÍTE 03","BWC SUÍTE 03","SUÍTE 04","BWC SUÍTE 04"];
 
-// ─── Parser DOCX FVS (tabela markdown) ────────────────────────────────────
+// ─── Parser DOCX FVS ──────────────────────────────────────────────────────
+// mammoth extrai tabelas como texto corrido, uma célula por linha
+// O padrão real é: cada linha é uma célula, células em sequência formam a linha da tabela
 function parseFvsDocx(fileName, text){
   const { apto, torre } = extractTorreApto(fileName);
   const servico = detectFvsServico(fileName, text);
   if(!servico) return [];
 
-  // Extrai data
   const dataMatch = text.match(/DATA\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
   const data = dataMatch?.[1]||"";
+  const criterios = FVS_CRITERIOS[servico];
+  const VALID = new Set(["A","R","N/V","N/A"]);
 
-  // Extrai ambientes da linha de cabeçalho da tabela
-  // Linha como: |  |  | **SALA** | **VARANDA** | ...
-  const headerMatch = text.match(/\|\s*\*\*SALA\*\*.*?\n/i) ||
-                      text.match(/\|\s*SALA\s*\|.*?\n/i);
-  let ambientes = AMBIENTES_FVS;
-  if(headerMatch){
-    const raw = headerMatch[0];
-    const cols = raw.split("|").map(c=>c.replace(/\*\*/g,"").trim()).filter(Boolean);
-    // Remove as primeiras 2 colunas (número e critério)
-    ambientes = cols.slice(2).filter(Boolean);
+  // Divide em tokens: remove bold markers, split por newlines e espaços múltiplos
+  const tokens = text
+    .replace(/\*\*/g,"")
+    .split(/\n/)
+    .map(l=>l.trim())
+    .filter(Boolean);
+
+  // Encontra índice da linha "SALA" para saber os ambientes
+  let ambientes = [...AMBIENTES_FVS];
+  const salaIdx = tokens.findIndex(t=>/^SALA$/i.test(t));
+  if(salaIdx !== -1){
+    // Coleta ambientes até encontrar algo que não seja um ambiente (ex: número "1")
+    const amb = [];
+    for(let i=salaIdx; i<tokens.length; i++){
+      const t = tokens[i].toUpperCase();
+      // Para quando encontra "1" (início dos critérios)
+      if(/^\d+$/.test(t)) break;
+      // Ignora tokens vazios ou de controle
+      if(t.length > 1 || /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ]/.test(t)) amb.push(tokens[i].toUpperCase());
+    }
+    if(amb.length >= 3) ambientes = amb;
   }
 
   const rows = [];
-  const criterios = FVS_CRITERIOS[servico];
 
-  // Procura linhas de dados: | **N** | Criterio texto | **A** | **R** | ...
-  const linhas = text.split("\n");
-  for(const linha of linhas){
-    if(!linha.includes("|")) continue;
-    const cols = linha.split("|").map(c=>c.replace(/\*\*/g,"").trim()).filter(Boolean);
-    if(cols.length < 4) continue;
-    // Primeira coluna = número (1,2,3...), segunda = texto do critério
-    const numCol = cols[0];
-    if(!/^\d+$/.test(numCol)) continue;
-    const numIdx = parseInt(numCol)-1;
+  // Procura por número de critério (1,2,3...) seguido de resultados A/R/N/V/N/A
+  for(let i=0; i<tokens.length; i++){
+    const tok = tokens[i].trim();
+    if(!/^\d+$/.test(tok)) continue;
+    const numIdx = parseInt(tok)-1;
     if(numIdx < 0 || numIdx >= criterios.length) continue;
     const criterio = criterios[numIdx];
-    // Resultados: cols a partir do índice 2
-    const resultados = cols.slice(2);
-    for(let i=0;i<resultados.length&&i<ambientes.length;i++){
-      const res = resultados[i].toUpperCase();
-      if(!["A","R","N/V","N/A"].includes(res)) continue;
+
+    // Coleta os próximos tokens que sejam resultados válidos
+    const resultados = [];
+    for(let j=i+1; j<tokens.length && resultados.length < ambientes.length; j++){
+      const v = tokens[j].toUpperCase().replace(/\s+/g,"");
+      if(VALID.has(v)){
+        resultados.push(v);
+      } else if(/^\d+$/.test(v)){
+        // Chegou no próximo critério
+        break;
+      } else if(resultados.length > 0 && v.length > 6){
+        // Texto longo = descrição de critério, para
+        break;
+      }
+    }
+
+    for(let k=0; k<resultados.length && k<ambientes.length; k++){
       rows.push({
         tipo_doc:"fvs", servico, torre, apto, pav:pav(apto), data,
-        ambiente: ambientes[i], criterio, resultado: res, fonte: fileName,
+        ambiente: ambientes[k], criterio, resultado: resultados[k], fonte: fileName,
       });
     }
   }
