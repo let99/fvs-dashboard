@@ -485,7 +485,7 @@ export default function App(){
   const handleFile = useCallback(async e=>{
     const files=Array.from(e.target.files||[]);
     if(!files.length) return;
-    setAllRows([]); setFvsRows([]); setErrors([]); setAiText("");
+    setAllRows([]); setFvsRows([]); setErrors([]);
     setFileNames(files.map(f=>f.name));
     setStatus("Processando...");
     let planilhas=[], fvs=[], errs=[];
@@ -522,7 +522,7 @@ export default function App(){
     setAllRows(planilhas); setFvsRows(fvs); setErrors(errs);
     setStatus(`${files.length} arquivo(s) processado(s). ${planilhas.length} registros planilha + ${fvs.length} registros FVS.`);
     if(fvs.length>0&&planilhas.length===0) setMainTab("fvs");
-    if(planilhas.length>0&&fvs.length===0) setMainTab("planilhas");
+    else if(planilhas.length>0&&fvs.length===0) setMainTab("planilhas");
   },[]);
 
   const torres=useMemo(()=>["TODAS",...[...new Set(allRows.map(r=>r.torre).filter(Boolean))].sort()],[allRows]);
