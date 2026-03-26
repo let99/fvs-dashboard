@@ -12,12 +12,11 @@ const C = {
   ok:"#16a34a", warn:"#f59e0b", bad:"#dc2626", na:"#94a3b8",
   blue:"#2563eb", purple:"#7c3aed", white:"#f8fafc", muted:"#64748b", row:"#ffffff08",
 };
-
 const PALETTE = ["#16a34a","#2563eb","#dc2626","#f59e0b","#ea580c","#7c3aed","#0891b2","#0f766e","#b91c1c","#64748b"];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
-const san   = v => String(v||"").replace(/\s+/g," ").trim();
-const pav   = a => { const m=String(a).match(/\d{3,4}/); return m?`${Math.floor(Number(m[0])/100)}º`:""; };
+const san     = v => String(v||"").replace(/\s+/g," ").trim();
+const pav     = a => { const m=String(a).match(/\d{3,4}/); return m?`${Math.floor(Number(m[0])/100)}º`:""; };
 const isApto  = v => /^\d{3,4}$|^t[eé]rreo$/i.test(san(v));
 const isTorre = v => /^[A-D]$/i.test(san(v));
 
@@ -37,11 +36,11 @@ function parseCSVLines(text){
 function detectTipo(fileName, rows){
   const head = rows.slice(0,6).flat().join(" ").toLowerCase();
   const fn   = fileName.toLowerCase();
-  if (/shaft/i.test(fn)||/shaft/i.test(head))                return "shaft";
+  if (/shaft/i.test(fn)||/shaft/i.test(head))                 return "shaft";
   if (/capiaç|capiac/i.test(fn)||/capiaç|capiac/i.test(head)) return "capiacos";
-  if (/passante/i.test(fn)||/passante/i.test(head))           return "passantes";
-  if (/esquadria/i.test(fn)||/esquadria/i.test(head))         return "esquadrias";
-  if (/cerâmica|ceramica|varanda/i.test(fn))                  return "ceramica";
+  if (/passante/i.test(fn)||/passante/i.test(head))            return "passantes";
+  if (/esquadria/i.test(fn)||/esquadria/i.test(head))          return "esquadrias";
+  if (/cerâmica|ceramica|varanda/i.test(fn))                   return "ceramica";
   return "generico";
 }
 
@@ -146,7 +145,42 @@ function parsePassantes(rows, fileName){
   return result;
 }
 
-// ─── PARSER ESQUADRIAS ────────────────────────────────────────────────────
+// ─── PARSER ESQUADRIAS — resumo do topo ───────────────────────────────────
+function parseEsquadriasSummary(rows, fileName){
+  const result=[];
+  const STATUS_MAP={ S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E" };
+
+  const headIdx=rows.findIndex(r=>r.join(" ").match(/TOTAL TORRE/i));
+  if(headIdx===-1) return null;
+
+  const headRow=rows[headIdx];
+  const torresCols=[];
+  headRow.forEach((cell,ci)=>{
+    const m=san(fix(cell)).match(/TOTAL TORRE\s+([A-D])/i);
+    if(m) torresCols.push({ torre:m[1].toUpperCase(), col:ci });
+  });
+  if(!torresCols.length) return null;
+
+  for(let i=headIdx+1;i<Math.min(headIdx+10,rows.length);i++){
+    const r=rows[i];
+    const statusCell=san(r[0])||san(r[1]);
+    const status=STATUS_MAP[statusCell];
+    if(!status) continue;
+    torresCols.forEach(({torre,col})=>{
+      let val=0;
+      for(let x=col;x<col+6;x++){
+        const n=parseInt(san(r[x]));
+        if(!isNaN(n)&&n>0){ val=n; break; }
+      }
+      for(let k=0;k<val;k++){
+        result.push({ tipo:"esquadrias", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
+      }
+    });
+  }
+  return result.length>0?result:null;
+}
+
+// ─── PARSER ESQUADRIAS — linha a linha (fallback) ─────────────────────────
 function parseEsquadrias(rows, fileName){
   const result=[];
   const STATUS_VALIDOS=new Set(["E","I","F","C","P.U","S"]);
@@ -156,12 +190,10 @@ function parseEsquadrias(rows, fileName){
     let ci=0;
     while(ci<hRow.length){
       const cell=san(hRow[ci]);
-      const isAptoCell      = /^apto$/i.test(cell);
-      const isEmptyBTorre   = cell===""&&ci+1<hRow.length&&/^torre$/i.test(san(hRow[ci+1]));
+      const isAptoCell    = /^apto$/i.test(cell);
+      const isEmptyBTorre = cell===""&&ci+1<hRow.length&&/^torre$/i.test(san(hRow[ci+1]));
       if(isAptoCell||isEmptyBTorre){
-        const aptoCol  = ci;
-        const torreCol = ci+1;
-        const ambStart = torreCol+1;
+        const aptoCol=ci, torreCol=ci+1, ambStart=torreCol+1;
         let ambEnd=hRow.length;
         for(let x=ambStart+1;x<hRow.length;x++){
           const cx=san(hRow[x]), cx1=x+1<hRow.length?san(hRow[x+1]):"";
@@ -210,8 +242,12 @@ function parseFile(fileName, csvText){
     case "shaft":      return parseShafts(rows, fileName);
     case "capiacos":   return parseCapiacos(rows, fileName);
     case "passantes":  return parsePassantes(rows, fileName);
-    case "esquadrias": return parseEsquadrias(rows, fileName);
-    default:           return [];
+    case "esquadrias": {
+      const summary=parseEsquadriasSummary(rows, fileName);
+      if(summary) return summary;
+      return parseEsquadrias(rows, fileName);
+    }
+    default: return [];
   }
 }
 
@@ -250,6 +286,7 @@ function calcTipo(rows, tipo){
     const t=r.torre||"?";
     if(!byTorre[t]) byTorre[t]={ torre:t, counts:{} };
     byTorre[t].counts[s]=(byTorre[t].counts[s]||0)+1;
+    if(!r.apto) return;
     const key=`${t}-${r.apto}`;
     if(!byApto[key]) byApto[key]={ torre:t, apto:r.apto, pav:r.pav||pav(r.apto), total:0, prob:0, statuses:new Set() };
     byApto[key].total++;
@@ -316,7 +353,7 @@ const Btn = ({children,onClick,color}) => (
 );
 
 function TabelaApto({ data }){
-  if(!data.byApto.length) return <p style={{color:C.muted}}>Sem dados para este filtro.</p>;
+  if(!data.byApto.length) return <p style={{color:C.muted}}>Sem dados por apartamento para este filtro.</p>;
   return(
     <div style={{overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
@@ -499,7 +536,6 @@ export default function App(){
         <h1 style={{fontSize:32,margin:"0 0 4px",color:C.white}}>Dashboard de Verificação de Serviços</h1>
         <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Cerâmica</p>
 
-        {/* Upload */}
         <div style={{background:C.card,borderRadius:18,padding:20,marginBottom:20,border:`1px solid ${C.border}`}}>
           <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
             <label style={{background:C.blue,color:"white",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontWeight:"bold",fontSize:13}}>
@@ -522,7 +558,6 @@ export default function App(){
         </div>
 
         {allRows.length>0 && <>
-          {/* KPIs */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:20}}>
             <KPI label="Shafts Abertos"        value={`${shaftAberto}/${shaftTotal}`} sub={`${shaftTotal?Math.round(shaftAberto/shaftTotal*100):0}% do total`}  color={C.ok}/>
             <KPI label="Capiaços c/ Problema"  value={capProb}  sub={`de ${capTotal} verificados`}  color={capProb>0?C.bad:C.ok}/>
@@ -530,7 +565,6 @@ export default function App(){
             <KPI label="Esquadrias Instaladas" value={`${esqInst}/${esqTotal}`} sub={`${esqTotal?Math.round(esqInst/esqTotal*100):0}% concluído`} color={C.blue}/>
           </div>
 
-          {/* Tabs */}
           <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`,marginBottom:0}}>
             {TABS.map(t=>(
               <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?C.blue:"transparent",color:tab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"10px 18px",cursor:"pointer",fontWeight:tab===t.id?"bold":"normal",fontSize:13}}>
