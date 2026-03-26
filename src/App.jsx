@@ -35,9 +35,13 @@ function parseCSVLines(text){
 
 // ─── Extrai torre e apto do nome do arquivo ────────────────────────────────
 function extractTorreApto(fileName){
-  const fn = fileName;
+  const fn = fileName.replace(/_R\d+_?/gi,""); // remove revisões ex: _R01_, _R02
   let apto="", torre="";
-  let m = fn.match(/(\d{3,4})\s*([A-D])(?:\s|\.|_|$)/i);
+  // Padrão: 3-4 dígitos seguido de letra A-D (separados por espaço, underscore, ponto ou fim)
+  let m = fn.match(/[_\s\.](\d{3,4})[_\s\.]*([A-D])[_\s\.\-]/i)
+        || fn.match(/[_\s\.](\d{3,4})[_\s\.]*([A-D])$/i)
+        || fn.match(/(\d{3,4})[_\s\.]*([A-D])[_\s\.\-]/i)
+        || fn.match(/(\d{3,4})[_\s\.]*([A-D])(?:\.|$)/i);
   if(m){ apto=m[1]; torre=m[2].toUpperCase(); }
   else {
     m = fn.match(/apto\s*(\d{3,4})\s*([A-D])/i);
