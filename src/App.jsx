@@ -6,7 +6,6 @@ import * as pdfjsLib from "pdfjs-dist";
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 
-// ─── Paleta ────────────────────────────────────────────────────────────────
 const C = {
   bg:"#0f172a", card:"#1e293b", border:"#334155", accent:"#38bdf8",
   ok:"#16a34a", warn:"#f59e0b", bad:"#dc2626", na:"#94a3b8",
@@ -14,7 +13,6 @@ const C = {
 };
 const PALETTE = ["#16a34a","#2563eb","#dc2626","#f59e0b","#ea580c","#7c3aed","#0891b2","#0f766e","#b91c1c","#64748b"];
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
 const san     = v => String(v||"").replace(/\s+/g," ").trim();
 const pav     = a => { const m=String(a).match(/\d{3,4}/); return m?`${Math.floor(Number(m[0])/100)}º`:""; };
 const isApto  = v => /^\d{3,4}$|^t[eé]rreo$/i.test(san(v));
@@ -42,6 +40,46 @@ function detectTipo(fileName, rows){
   if (/esquadria/i.test(fn)||/esquadria/i.test(head))          return "esquadrias";
   if (/cerâmica|ceramica|varanda/i.test(fn))                   return "ceramica";
   return "generico";
+}
+
+// ─── Helper: parser de resumo genérico (LEGENDA × TORRE A/B/C/D) ──────────
+// Usado por esquadrias E passantes
+function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
+  const result=[];
+
+  const headIdx=rows.findIndex(r=>headerPattern.test(r.join(" ")));
+  if(headIdx===-1) return null;
+
+  const headRow=rows[headIdx];
+  const torresCols=[];
+  headRow.forEach((cell,ci)=>{
+    // aceita "TOTAL TORRE A" ou "TORRE A"
+    const m=san(fix(cell)).match(/(?:TOTAL\s+)?TORRE\s+([A-D])$/i);
+    if(m) torresCols.push({ torre:m[1].toUpperCase(), col:ci });
+  });
+  if(!torresCols.length) return null;
+
+  for(let i=headIdx+1;i<Math.min(headIdx+12,rows.length);i++){
+    const r=rows[i];
+    const statusCell=san(r[0]);
+    if(/^apto$|^total$/i.test(statusCell)) break;
+    const status=statusMap[statusCell];
+    if(!status) continue;
+
+    torresCols.forEach(({torre,col},ti)=>{
+      const nextCol=ti+1<torresCols.length?torresCols[ti+1].col:col+4;
+      const windowEnd=Math.min(col+3, nextCol);
+      let val=0;
+      for(let x=col;x<windowEnd;x++){
+        const n=parseInt(san(r[x]));
+        if(!isNaN(n)&&n>=0){ val=n; break; }
+      }
+      for(let k=0;k<val;k++){
+        result.push({ tipo, torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
+      }
+    });
+  }
+  return result.length>0?result:null;
 }
 
 // ─── PARSER SHAFTS ────────────────────────────────────────────────────────
@@ -117,11 +155,20 @@ function parseCapiacos(rows, fileName){
 }
 
 // ─── PARSER PASSANTES ─────────────────────────────────────────────────────
+const PASS_STATUS_MAP={ R:"R", C:"C", OK:"OK", Q:"Q", "N/V":"N/V", P:"P", F:"F", S:"S" };
 const PASS_AMBIENTES=["VARANDA","COZINHA","BWC SERVIÇO","BWC SUÍTE 01 E 02","BWC SUÍTE 03","BWC SUÍTE MASTER","ÁREA DE SERVIÇO","LAVABO"];
 
 function parsePassantes(rows, fileName){
+  // Tenta resumo primeiro (linha com TORRE A, TORRE B sem "TOTAL")
+  const summary=parseSummaryByTorre(rows, fileName, "passantes", PASS_STATUS_MAP, /TORRE\s+[AB]/i);
+  if(summary) return summary;
+
+  // Fallback: linha a linha
   const result=[];
-  const headerIdxs=rows.reduce((acc,r,i)=>{ if(r[1]&&/apto/i.test(r[1])&&r[2]&&/torre/i.test(r[2])) acc.push(i); return acc; },[]);
+  const headerIdxs=rows.reduce((acc,r,i)=>{
+    if(r[1]&&/apto/i.test(r[1])&&r[2]&&/torre/i.test(r[2])) acc.push(i);
+    return acc;
+  },[]);
   for(const hi of headerIdxs){
     for(let i=hi+1;i<rows.length;i++){
       const r=rows[i];
@@ -146,53 +193,10 @@ function parsePassantes(rows, fileName){
 }
 
 // ─── PARSER ESQUADRIAS — resumo do topo ───────────────────────────────────
+const ESQ_STATUS_MAP={ S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E" };
+
 function parseEsquadriasSummary(rows, fileName){
-  const result=[];
-  const STATUS_MAP={ S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E" };
-
-  // Encontra linha com "TOTAL TORRE"
-  const headIdx=rows.findIndex(r=>r.join(" ").match(/TOTAL TORRE/i));
-  if(headIdx===-1) return null;
-
-  const headRow=rows[headIdx];
-
-  // Mapeia cada torre para sua coluna exata
-  const torresCols=[];
-  headRow.forEach((cell,ci)=>{
-    const m=san(fix(cell)).match(/TOTAL TORRE\s+([A-D])/i);
-    if(m) torresCols.push({ torre:m[1].toUpperCase(), col:ci });
-  });
-  if(!torresCols.length) return null;
-
-  // Para cada torre, acha a coluna exata do número:
-  // o número fica NA MESMA coluna do cabeçalho "TOTAL TORRE X"
-  // ou nas próximas colunas não-vazias — mas só até a próxima torre
-  for(let i=headIdx+1;i<Math.min(headIdx+10,rows.length);i++){
-    const r=rows[i];
-
-    // Pega status da col 0
-    const statusCell=san(r[0]);
-    const status=STATUS_MAP[statusCell];
-    if(!status) continue;
-
-    torresCols.forEach(({torre,col},ti)=>{
-      // Limite direito: coluna da próxima torre (ou fim da linha)
-      const maxCol = ti+1<torresCols.length ? torresCols[ti+1].col : col+8;
-
-      // Pega TODOS os números entre col e maxCol e soma
-      // (alguns CSVs têm o número logo na col, outros uma ou duas à direita)
-      let val=0;
-      for(let x=col;x<maxCol;x++){
-        const n=parseInt(san(r[x]));
-        if(!isNaN(n)) val+=n;
-      }
-
-      for(let k=0;k<val;k++){
-        result.push({ tipo:"esquadrias", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
-      }
-    });
-  }
-  return result.length>0?result:null;
+  return parseSummaryByTorre(rows, fileName, "esquadrias", ESQ_STATUS_MAP, /TOTAL TORRE/i);
 }
 
 // ─── PARSER ESQUADRIAS — linha a linha (fallback) ─────────────────────────
@@ -257,7 +261,7 @@ function parseFile(fileName, csvText){
     case "shaft":      return parseShafts(rows, fileName);
     case "capiacos":   return parseCapiacos(rows, fileName);
     case "passantes":  return parsePassantes(rows, fileName);
-    case "esquadrias": {
+    case "esquadrias":{
       const summary=parseEsquadriasSummary(rows, fileName);
       if(summary) return summary;
       return parseEsquadrias(rows, fileName);
@@ -320,9 +324,7 @@ function calcTipo(rows, tipo){
 
 // ─── Componentes ──────────────────────────────────────────────────────────
 function BarChart({ counts, labels, colors }){
-  const entries=Object.entries(counts)
-    .filter(([k,v])=>v>0&&labels?.[k])
-    .sort((a,b)=>b[1]-a[1]);
+  const entries=Object.entries(counts).filter(([k,v])=>v>0&&labels?.[k]).sort((a,b)=>b[1]-a[1]);
   const total=entries.reduce((a,[,v])=>a+v,0)||1;
   const maxVal=entries[0]?.[1]||1;
   return(
@@ -421,7 +423,6 @@ function TabelaTorre({ data }){
   );
 }
 
-// ─── Exportação CSV ───────────────────────────────────────────────────────
 function exportCSV(rows){
   const lines=["tipo,torre,apto,pav,ambiente,status,fonte"];
   rows.forEach(r=>lines.push(`${r.tipo},${r.torre},${r.apto||""},${r.pav||""},${r.ambiente||""},${r.status||""},${r.fonte||""}`));
@@ -546,7 +547,7 @@ export default function App(){
 
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{background:"#082f49",color:C.accent,borderRadius:999,padding:"3px 12px",fontSize:12,fontWeight:"bold"}}>FVS Qualidade</span>
-          <span style={{color:C.muted,fontSize:12}}>v3.0 — Multi-serviço</span>
+          <span style={{color:C.muted,fontSize:12}}>v3.1 — Multi-serviço</span>
         </div>
         <h1 style={{fontSize:32,margin:"0 0 4px",color:C.white}}>Dashboard de Verificação de Serviços</h1>
         <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Cerâmica</p>
