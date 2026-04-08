@@ -646,9 +646,17 @@ export default function App(){
           const pdf=await pdfjsLib.getDocument({data:buf}).promise;
           let txt="";
           for(let p=1;p<=pdf.numPages;p++){ const page=await pdf.getPage(p); const ct=await page.getTextContent(); txt+=" "+ct.items.map(i=>i.str).join(" "); }
+          // Tenta FVS primeiro
           const fvsParsed=parseFvsDocx(file.name,txt);
-          if(fvsParsed.length) fvs=[...fvs,...fvsParsed];
-          else planilhas=[...planilhas,...parseFile(file.name,txt)];
+          if(fvsParsed.length){ fvs=[...fvs,...fvsParsed]; continue; }
+          // Tenta varanda
+          const pdfRows=parseCSVLines(txt.replace(/\s+/g,","));
+          const varandaParsed=parseCeramicaVaranda(pdfRows,file.name);
+          if(varandaParsed.length){ varanda=[...varanda,...varandaParsed]; continue; }
+          // Fallback planilha
+          const parsed=parseFile(file.name,txt);
+          if(parsed.length) planilhas=[...planilhas,...parsed];
+          else errs.push(`${file.name}: nenhum dado reconhecido.`);
         } else errs.push(`${file.name}: formato não suportado.`);
       }catch(err){ console.error(err); errs.push(`${file.name}: erro — ${err.message}`); }
     }
@@ -672,7 +680,10 @@ export default function App(){
   const passTotal=Object.values(passData.counts).reduce((a,b)=>a+b,0), passProb=passTotal-(passData.counts["OK"]||0)-(passData.counts["N/V"]||0);
   const esqTotal=Object.values(esqData.counts).reduce((a,b)=>a+b,0), esqInst=esqData.counts["E"]||0;
 
-  const varandaData=useMemo(()=>calcVaranda(varandaRows),[varandaRows]);
+  const [varandaTorreFilter, setVarandaTorreFilter] = useState("TODAS");
+  const varandaTorres = useMemo(()=>["TODAS",...[...new Set(varandaRows.map(r=>r.torre).filter(Boolean))].sort()],[varandaRows]);
+  const varandaScoped = useMemo(()=>varandaTorreFilter==="TODAS"?varandaRows:varandaRows.filter(r=>r.torre===varandaTorreFilter),[varandaRows,varandaTorreFilter]);
+  const varandaData=useMemo(()=>calcVaranda(varandaScoped),[varandaScoped]);
 
   const fvsServicos=["ceramica","contrapiso","porta","esquadria_alum"];
   const fvsTorres=useMemo(()=>["TODAS",...[...new Set(fvsRows.map(r=>r.torre).filter(Boolean))].sort()],[fvsRows]);
@@ -751,13 +762,21 @@ export default function App(){
             {planTab==="esquadrias"&&<><Box title={`Distribuição — Esquadrias — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><BarChart counts={esqData.counts} labels={CLASS.esquadrias.labels} colors={CLASS.esquadrias.colors}/></Box><Box title="Por Torre — Esquadrias"><TabelaTorre data={esqData}/></Box><Box title={`Por Apartamento — Esquadrias — ${torreFilter==="TODAS"?"Todas as torres":`Torre ${torreFilter}`}`}><TabelaApto data={esqData}/></Box></>}
 
             {planTab==="varanda"&&<>
-              <Box title="Progresso de Aplicação — Cerâmica Varanda">
+              <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8,marginTop:16,marginBottom:4}}>
+                {varandaRows.length>0&&<>
+                  <span style={{fontSize:11,color:C.muted}}>TORRE</span>
+                  <select value={varandaTorreFilter} onChange={e=>setVarandaTorreFilter(e.target.value)} style={selStyle}>
+                    {varandaTorres.map(t=><option key={t} value={t}>{t==="TODAS"?"Todas as torres":`Torre ${t}`}</option>)}
+                  </select>
+                </>}
+              </div>
+              <Box title={`Progresso de Aplicação — Cerâmica Varanda — ${varandaTorreFilter==="TODAS"?"Todas as torres":`Torre ${varandaTorreFilter}`}`}>
                 {varandaData.torreTable.length
                   ? <VarandaProgressBars torreTable={varandaData.torreTable}/>
                   : <p style={{color:C.muted}}>Sem dados. Carregue o arquivo de mapeamento de cerâmica varanda.</p>}
               </Box>
               {varandaData.aptoTable.length>0&&(
-                <Box title="Situação por Apartamento — Cerâmica Varanda">
+                <Box title={`Situação por Apartamento — Cerâmica Varanda — ${varandaTorreFilter==="TODAS"?"Todas as torres":`Torre ${varandaTorreFilter}`}`}>
                   <TabelaVarandaApto aptoTable={varandaData.aptoTable}/>
                 </Box>
               )}
