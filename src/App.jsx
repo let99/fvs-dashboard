@@ -600,8 +600,10 @@ export default function App(){
           const buf=await file.arrayBuffer();
           const wb=XLSX.read(buf,{type:"array"});
           for(const sn of wb.SheetNames){
+            // Cada aba é processada individualmente com seu nome
             const csv=XLSX.utils.sheet_to_csv(wb.Sheets[sn]);
-            const parsed=parseFile(`${file.name} ${sn}`,csv);
+            const sheetFileName=`${file.name} ${sn}`;
+            const parsed=parseFile(sheetFileName, csv);
             varanda=[...varanda,...parsed.filter(r=>r.tipo_doc==="varanda")];
             planilhas=[...planilhas,...parsed.filter(r=>r.tipo_doc!=="varanda")];
           }
