@@ -106,71 +106,42 @@ function parseFvsDocx(fileName, text){
 }
 
 // ─── Parser Cerâmica Varanda ───────────────────────────────────────────────
-// Layout: cabeçalho com blocos A,B,C,D (dois aptos cada: 02 e 01)
-// Linhas: andar | S/N/C por coluna
-// S = aplicada, C = crédito (ambos contam como executado), N = não aplicada
+// Layout fixo: col0=ANDAR, col1=02A, col2=01A, col3=02B, col4=01B,
+//              col5=02C, col6=01C, col7=02D, col8=01D
 function parseCeramicaVaranda(rows, fileName){
   const result = [];
 
-  // Encontra a linha de cabeçalho com os blocos (A, B, C, D)
-  // Padrão: linha com "BLOCO" ou com A,B,C,D repetidos
-  const headIdx = rows.findIndex(r => {
-    const flat = r.join(" ").toUpperCase();
-    return /\bA\b.*\bB\b.*\bC\b.*\bD\b/.test(flat) && r.filter(c=>/^[ABCD]$/.test(san(c))).length >= 4;
-  });
-  if(headIdx === -1) return result;
+  // Mapa fixo de colunas → torre+sufixo de apto
+  const COL_MAP = [
+    { col:1, torre:"A", suf:"02" },
+    { col:2, torre:"A", suf:"01" },
+    { col:3, torre:"B", suf:"02" },
+    { col:4, torre:"B", suf:"01" },
+    { col:5, torre:"C", suf:"02" },
+    { col:6, torre:"C", suf:"01" },
+    { col:7, torre:"D", suf:"02" },
+    { col:8, torre:"D", suf:"01" },
+  ];
 
-  // Monta mapa de coluna → {torre, apto}
-  // Ex: A02, A01, B02, B01, C02, C01, D02, D01
-  const headRow = rows[headIdx];
-  // Linha anterior pode ter os nomes dos aptos (02, 01)
-  const aptoRow = headIdx > 0 ? rows[headIdx - 1] : [];
-  const colMap = [];
+  // Encontra a linha de início dos dados (primeira linha onde col0 é número 1-30)
+  const dataStart = rows.findIndex(r => /^[1-9]\d?$/.test(san(r[0])) && san(r[0]) !== "");
+  if(dataStart === -1) return result;
 
-  // Tenta extrair torre+apto da linha de cabeçalho
-  // Formato pode ser "A02", "A01" na mesma linha ou torre na linha acima e apto na linha do andar
-  headRow.forEach((cell, ci) => {
-    const c = san(cell).toUpperCase();
-    // Padrão composto: "A02", "B01" etc
-    const m = c.match(/^([A-D])(0[12])$/);
-    if(m) { colMap.push({ ci, torre: m[1], apto: null }); return; }
-    // Apenas torre: A, B, C, D
-    if(/^[A-D]$/.test(c)) {
-      // Pega o número do apto da linha de aptos (anterior) ou usa sequência
-      const aptoVal = aptoRow[ci] ? san(aptoRow[ci]) : "";
-      colMap.push({ ci, torre: c, apto: aptoVal || null });
-    }
-  });
-
-  // Se não encontrou colunas, tenta outra abordagem: linha com 02/01 depois dos blocos
-  if(colMap.length === 0) return result;
-
-  // Resolve aptos: se não tem apto definido, alterna 02/01 por par de torres
-  const torresVistas = {};
-  colMap.forEach(col => {
-    if(!col.apto || !/^\d+$/.test(col.apto)){
-      torresVistas[col.torre] = (torresVistas[col.torre]||0) + 1;
-      col.apto = torresVistas[col.torre] === 1 ? "02" : "01";
-    }
-  });
-
-  // Lê as linhas de dados (andar + resultados)
-  for(let i = headIdx + 1; i < rows.length; i++){
+  for(let i = dataStart; i < rows.length; i++){
     const r = rows[i];
     const andarCell = san(r[0]);
-    if(!andarCell || !/^\d+$/.test(andarCell)) continue;
+    if(!/^\d+$/.test(andarCell)) break; // para quando acabam os andares
     const andar = parseInt(andarCell);
-    if(andar < 1 || andar > 30) continue;
+    if(andar < 1 || andar > 30) break;
 
-    colMap.forEach(({ ci, torre, apto }) => {
-      const val = san(r[ci]).toUpperCase();
-      if(!val || !["S","N","C"].includes(val)) return;
-      // Constrói número do apto: andar + sufixo (ex: 3 + 02 = 302)
-      const aptoNum = `${andar}${apto}`;
+    COL_MAP.forEach(({ col, torre, suf }) => {
+      const val = san(r[col]).toUpperCase();
+      if(!["S","N","C"].includes(val)) return;
+      const aptoNum = `${andar}${suf}`;
       result.push({
-        tipo_doc: "varanda", servico: "varanda",
-        torre, apto: aptoNum, pav: `${andar}º`,
-        status: val, fonte: fileName,
+        tipo_doc:"varanda", servico:"varanda",
+        torre, apto:aptoNum, pav:`${andar}º`,
+        status:val, fonte:fileName,
       });
     });
   }
@@ -645,15 +616,28 @@ export default function App(){
           const buf=await file.arrayBuffer();
           const pdf=await pdfjsLib.getDocument({data:buf}).promise;
           let txt="";
-          for(let p=1;p<=pdf.numPages;p++){ const page=await pdf.getPage(p); const ct=await page.getTextContent(); txt+=" "+ct.items.map(i=>i.str).join(" "); }
-          // Tenta FVS primeiro
+          for(let p=1;p<=pdf.numPages;p++){
+            const page=await pdf.getPage(p);
+            const ct=await page.getTextContent();
+            // Preserva quebras de linha agrupando por bloco vertical
+            const items=ct.items;
+            let lastY=null;
+            for(const item of items){
+              const y=item.transform?.[5];
+              if(lastY!==null&&Math.abs(y-lastY)>5) txt+="\n";
+              txt+=item.str;
+              lastY=y;
+            }
+            txt+="\n";
+          }
+          // 1) Tenta FVS (cerâmica, contrapiso, porta, esquadria alum)
           const fvsParsed=parseFvsDocx(file.name,txt);
           if(fvsParsed.length){ fvs=[...fvs,...fvsParsed]; continue; }
-          // Tenta varanda
-          const pdfRows=parseCSVLines(txt.replace(/\s+/g,","));
-          const varandaParsed=parseCeramicaVaranda(pdfRows,file.name);
+          // 2) Tenta varanda (planilha matricial)
+          const pdfCsvRows=parseCSVLines(txt.replace(/[ \t]+/g,","));
+          const varandaParsed=parseCeramicaVaranda(pdfCsvRows,file.name);
           if(varandaParsed.length){ varanda=[...varanda,...varandaParsed]; continue; }
-          // Fallback planilha
+          // 3) Fallback planilha CSV
           const parsed=parseFile(file.name,txt);
           if(parsed.length) planilhas=[...planilhas,...parsed];
           else errs.push(`${file.name}: nenhum dado reconhecido.`);
