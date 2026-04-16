@@ -28,7 +28,9 @@ function fix(s){
 }
 function fixEnc(s){ try{ return decodeURIComponent(escape(s)); }catch{ return s; } }
 function parseCSVLines(text){
-  return text.split(/\r?\n/).map(l=>l.split(",").map(c=>san(fix(fixEnc(c)))));
+  // Detecta separador: tab ou vírgula
+  const sep = text.indexOf("\t") !== -1 && text.indexOf("\t") < (text.indexOf(",")===-1?9999:text.indexOf(",")) ? "\t" : ",";
+  return text.split(/\r?\n/).map(l=>l.split(sep).map(c=>san(fix(fixEnc(c)))));
 }
 
 // ─── Extrai torre e apto do nome do arquivo ────────────────────────────────
@@ -203,29 +205,32 @@ function parseShafts(rows, fileName){
   const isCasarao=/casar/i.test(fileName)||/casar/i.test(flatHead);
 
   if(isCasarao){
-    // Layout Casarão: col0=nome do shaft (Shaft 1, Shaft 2),
-    // linha de cabeçalho com ambientes (Copa 1, Copa 2, Hall 1...)
-    // Encontra linha de cabeçalho: primeira linha com "casarão" ou com ambientes tipo "Copa"
     const hiIdx=rows.findIndex(r=>
       r.some(c=>/casarão|casarao|casarã/i.test(san(c)))||
       r.some(c=>/copa|hall|academia|brinquedo|festas/i.test(san(c)))
     );
     if(hiIdx===-1) return result;
-    // Ambientes são as colunas a partir da col 1
     const ambientes=rows[hiIdx].slice(1).map(c=>san(fix(c))).filter(Boolean);
-    // Lê linhas de shafts
+    // Normaliza status do casarão: NF e N/F → NF, ? → ?
+    function normCasarao(v){
+      const s=san(v).toUpperCase().replace(/\s/g,"");
+      if(s==="NF"||s==="N/F") return "NF";
+      if(s==="A") return "A";
+      if(s==="FS") return "FS";
+      if(s==="FC") return "FC";
+      if(s==="N/A") return "N/A";
+      if(s==="N/V") return "N/V";
+      if(s==="?") return "?";
+      return s||null;
+    }
     for(let i=hiIdx+1;i<rows.length;i++){
       const r=rows[i];
       const shaftName=san(r[0]);
       if(!shaftName||!/shaft\s*\d+/i.test(shaftName)) continue;
       ambientes.forEach((amb,j)=>{
-        const val=san(r[j+1]).toUpperCase();
-        if(!val||val==="") return;
-        result.push({
-          tipo:"shaft", torre:"CASARÃO",
-          apto:shaftName, pav:"",
-          ambiente:amb, status:val, fonte:fileName
-        });
+        const val=normCasarao(r[j+1]);
+        if(!val) return;
+        result.push({ tipo:"shaft", torre:"CASARÃO", apto:shaftName, pav:"", ambiente:amb, status:val, fonte:fileName });
       });
     }
     return result;
@@ -364,7 +369,7 @@ function parseFile(fileName,csvText){
 
 // ─── Classificadores ──────────────────────────────────────────────────────
 const CLASS={
-  shaft:{ ok:["A"],warn:["FS"],na:["N/A","N/V","?"], labels:{A:"Aberto",FS:"Fech. s/ cerâmica",FC:"Fech. c/ cerâmica","N/A":"N/A","N/V":"N/V"}, colors:{A:"#16a34a",FS:"#f59e0b",FC:"#2563eb","N/A":"#94a3b8","N/V":"#64748b"} },
+  shaft:{ ok:["A"],warn:["FS"],na:["N/A","N/V","?","NF"], labels:{A:"Aberto",FS:"Fech. s/ cerâmica",FC:"Fech. c/ cerâmica","N/A":"N/A","N/V":"N/V",NF:"Não fechado","?":"Não verificado"}, colors:{A:"#16a34a",FS:"#f59e0b",FC:"#2563eb","N/A":"#94a3b8","N/V":"#64748b",NF:"#dc2626","?":"#475569"} },
   capiacos:{ ok:["OK"],warn:["Q","N","Q.I","F"],na:["N/V","N/A"], labels:{OK:"Correto",Q:"Sem queda",N:"Desnivelado","Q.I":"Queda invertida",F:"Falta fachada","N/V":"N/V"}, colors:{OK:"#16a34a",Q:"#dc2626",N:"#f59e0b","Q.I":"#b91c1c",F:"#ea580c","N/V":"#94a3b8"} },
   passantes:{ ok:["OK"],warn:["R","C","Q","P","F","S"],na:["N/V","N/A"], labels:{OK:"Correto",R:"Rente ao piso",C:"PEX chumbado",Q:"Quebrado",P:"Mal-fixado",F:"Falta tubo",S:"Sujeira","N/V":"N/V"}, colors:{OK:"#16a34a",R:"#dc2626",C:"#f59e0b",Q:"#b91c1c",P:"#ea580c",F:"#7c3aed",S:"#0891b2","N/V":"#94a3b8"} },
   esquadrias:{ ok:["E"],warn:["I","F","C","P.U","S"],na:[], labels:{E:"Instalada",I:"Pronto p/ instalar",F:"Falta rejunte/fachada",C:"Falta contramarco","P.U":"P.U incompleto",S:"Contramarco sujo"}, colors:{E:"#16a34a",I:"#2563eb",F:"#dc2626",C:"#f59e0b","P.U":"#ea580c",S:"#64748b"} },
