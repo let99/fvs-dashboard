@@ -143,7 +143,8 @@ function detectTipo(fileName, rows){
   if (/capiaç|capiac/i.test(fn)) return "capiacos";
   if (/passante/i.test(fn))      return "passantes";
   if (/esquadria/i.test(fn))     return "esquadrias";
-  if (/cerâmica.*varanda|varanda.*cerâmica|mapeamento.*varanda/i.test(fn)) return "varanda";
+  if (/som.cavo|mapeamento.*fvs.*cerâ|mapeamento.*cerâ.*apto/i.test(fn)) return "somcavo";
+  if (/som.cavo|mapeamento.*fvs.*cerâ|mapeamento.*cerâ.*apto/i.test(head)) return "somcavo";
   // Nome da aba indica shaft: AB, CD, Casarão
   if (/\b(ab|cd)\b/i.test(fn))   return "shaft";
   if (/casar/i.test(fn))         return "shaft";
@@ -282,7 +283,112 @@ function parseShafts(rows, fileName){
   return result;
 }
 
-// ─── Parser Capiaços ──────────────────────────────────────────────────────
+// ─── Parser Som Cavo ──────────────────────────────────────────────────────
+// Layout: APTO, TORRE, VARANDA, SALA, COZINHA, ÁREA DE SERVIÇO, DEPÓSITO,
+//         BWC SERVIÇO, LAVABO, BWC SUÍTE 01 E 02, BWC SUÍTE 03, BWC SUÍTE MASTER, Nº FVS FEITAS
+const SOMCAVO_AMBIENTES=["VARANDA","SALA","COZINHA","ÁREA DE SERVIÇO","DEPÓSITO","BWC SERVIÇO","LAVABO","BWC SUÍTE 01 E 02","BWC SUÍTE 03","BWC SUÍTE MASTER"];
+
+function parseSomCavo(rows, fileName){
+  const result=[];
+  // Encontra todos os cabeçalhos APTO+TORRE
+  const headerIdxs=rows.reduce((acc,r,i)=>{
+    if(r.some(c=>/^apto$/i.test(san(c)))&&r.some(c=>/^torre$/i.test(san(c)))) acc.push(i);
+    return acc;
+  },[]);
+
+  for(const hi of headerIdxs){
+    const hRow=rows[hi];
+    // Detecta todos os blocos APTO+TORRE na mesma linha
+    const blocos=[];
+    hRow.forEach((cell,ci)=>{
+      if(!/^apto$/i.test(san(cell))) return;
+      for(let ti=ci+1;ti<=ci+2&&ti<hRow.length;ti++){
+        if(/^torre$/i.test(san(hRow[ti]))){
+          blocos.push({aptoCol:ci, torreCol:ti, ambStart:ti+1});
+          break;
+        }
+      }
+    });
+    if(!blocos.length) continue;
+
+    for(let i=hi+1;i<rows.length;i++){
+      const r=rows[i];
+      // Para quando chega em linha de totais ou vazia
+      if(r.every(c=>!san(c))) continue;
+      for(const b of blocos){
+        const apto=san(r[b.aptoCol]);
+        const torre=san(r[b.torreCol]).toUpperCase();
+        if(!/^\d{3,4}$/.test(apto)) continue;
+        if(!/^[A-D]$/.test(torre)) continue;
+        SOMCAVO_AMBIENTES.forEach((amb,j)=>{
+          const raw=san(r[b.ambStart+j]);
+          if(!raw||raw==="") return;
+          if(/n\/v/i.test(raw)){
+            result.push({tipo_doc:"somcavo",torre,apto,pav:pav(apto),ambiente:amb,pedras:null,status:"N/V",fonte:fileName});
+          } else {
+            const n=parseInt(raw);
+            if(isNaN(n)) return;
+            result.push({tipo_doc:"somcavo",torre,apto,pav:pav(apto),ambiente:amb,pedras:n,status:n>0?"R":"A",fonte:fileName});
+          }
+        });
+      }
+    }
+  }
+  return result;
+}
+
+// ─── Cálculo Som Cavo ─────────────────────────────────────────────────────
+function calcSomCavo(rows){
+  const filtered=rows.filter(r=>r.tipo_doc==="somcavo");
+
+  // Por ambiente (pareto)
+  const byAmb={};
+  filtered.forEach(r=>{
+    if(!byAmb[r.ambiente]) byAmb[r.ambiente]={ambiente:r.ambiente,pedras:0,ambReprov:0,ambTotal:0,nvCount:0};
+    if(r.status==="N/V"){ byAmb[r.ambiente].nvCount++; return; }
+    byAmb[r.ambiente].ambTotal++;
+    byAmb[r.ambiente].pedras+=r.pedras||0;
+    if(r.status==="R") byAmb[r.ambiente].ambReprov++;
+  });
+  const paretoAmb=Object.values(byAmb)
+    .map(x=>({...x,pct:x.ambTotal?Math.round(x.ambReprov/x.ambTotal*100):0}))
+    .sort((a,b)=>b.pedras-a.pedras);
+
+  // Por torre
+  const byTorre={};
+  filtered.forEach(r=>{
+    const t=r.torre||"?";
+    if(!byTorre[t]) byTorre[t]={torre:t,pedras:0,ambReprov:0,ambTotal:0,nv:0};
+    if(r.status==="N/V"){ byTorre[t].nv++; return; }
+    byTorre[t].ambTotal++;
+    byTorre[t].pedras+=r.pedras||0;
+    if(r.status==="R") byTorre[t].ambReprov++;
+  });
+  const torreTable=Object.values(byTorre)
+    .map(x=>({...x,pct:x.ambTotal?Math.round(x.ambReprov/x.ambTotal*100):0}))
+    .sort((a,b)=>a.torre.localeCompare(b.torre));
+
+  // Por apto
+  const byApto={};
+  filtered.forEach(r=>{
+    const key=`${r.torre}-${r.apto}`;
+    if(!byApto[key]) byApto[key]={torre:r.torre,apto:r.apto,pav:r.pav,pedras:0,ambReprov:0,ambTotal:0,ambientes:new Set()};
+    if(r.status==="N/V") return;
+    byApto[key].ambTotal++;
+    byApto[key].pedras+=r.pedras||0;
+    if(r.status==="R"){ byApto[key].ambReprov++; byApto[key].ambientes.add(r.ambiente); }
+  });
+  const aptoTable=Object.values(byApto)
+    .filter(x=>x.pedras>0||x.ambReprov>0)
+    .map(x=>({...x,ambientes:[...x.ambientes].join(", ")}))
+    .sort((a,b)=>b.pedras-a.pedras);
+
+  const totalPedras=filtered.filter(r=>r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
+  const totalAmbReprov=filtered.filter(r=>r.status==="R").length;
+  const totalAmbVerif=filtered.filter(r=>r.status!=="N/V").length;
+
+  return{paretoAmb,torreTable,aptoTable,totalPedras,totalAmbReprov,totalAmbVerif};
+}
 const CAP_STATUS_MAP={Q:"Q",N:"N","Q.I":"Q.I",F:"F",OK:"OK","N/V":"N/V"};
 function parseCapiacos(rows,fileName){
   const summary=parseSummaryByTorre(rows,fileName,"capiacos",CAP_STATUS_MAP,/TORRE\s+[A-D]/i);
@@ -369,6 +475,7 @@ function parseFile(fileName,csvText){
     case "shaft":      return parseShafts(rows,fileName);
     case "capiacos":   return parseCapiacos(rows,fileName);
     case "passantes":  return parsePassantes(rows,fileName);
+    case "somcavo":    return parseSomCavo(rows,fileName);
     case "varanda":    return parseCeramicaVaranda(rows,fileName);
     case "esquadrias": { const s=parseSummaryByTorre(rows,fileName,"esquadrias",ESQ_STATUS_MAP,/TOTAL TORRE/i); return s||parseEsquadrias(rows,fileName); }
     default: return [];
@@ -606,12 +713,13 @@ export default function App(){
   const [fvsTab,setFvsTab]                 = useState("ceramica");
   const [torreFilter,setTorreFilter]       = useState("TODAS");
   const [fvsTorreFilter,setFvsTorreFilter] = useState("TODAS");
-  const [varandaTorreFilter,setVarandaTorreFilter] = useState("TODAS");
+  const [somCavoRows,setSomCavoRows]           = useState([]);
+  const [somCavoTorreFilter,setSomCavoTorreFilter] = useState("TODAS");
 
   const handleFile = useCallback(async e=>{
     const files=Array.from(e.target.files||[]);
     if(!files.length) return;
-    setAllRows([]); setFvsRows([]); setVarandaRows([]); setErrors([]);
+    setAllRows([]); setFvsRows([]); setVarandaRows([]); setSomCavoRows([]); setErrors([]);
     setFileNames(files.map(f=>f.name));
     setStatus("Processando...");
     let planilhas=[], fvs=[], varanda=[], errs=[];
@@ -621,19 +729,22 @@ export default function App(){
         const ext=file.name.split(".").pop()?.toLowerCase();
         if(ext==="csv"){
           const text=await file.text();
-          const parsed=parseFile(file.name,text);
-          varanda=[...varanda,...parsed.filter(r=>r.tipo_doc==="varanda")];
-          const rest=parsed.filter(r=>r.tipo_doc!=="varanda");
-          if(rest.length) planilhas=[...planilhas,...rest];
-          else if(!parsed.filter(r=>r.tipo_doc==="varanda").length) errs.push(`${file.name}: nenhuma linha reconhecida.`);
+          const scRows=parsed.filter(r=>r.tipo_doc==="somcavo");
+          const vRows=parsed.filter(r=>r.tipo_doc==="varanda");
+          const pRows=parsed.filter(r=>r.tipo_doc!=="varanda"&&r.tipo_doc!=="somcavo");
+          setSomCavoRows(prev=>[...prev,...scRows]);
+          varanda=[...varanda,...vRows];
+          if(pRows.length) planilhas=[...planilhas,...pRows];
+          else if(!scRows.length&&!vRows.length) errs.push(`${file.name}: nenhuma linha reconhecida.`);
         } else if(ext==="xlsx"||ext==="xls"){
           const buf=await file.arrayBuffer();
           const wb=XLSX.read(buf,{type:"array"});
           for(const sn of wb.SheetNames){
             const csv=XLSX.utils.sheet_to_csv(wb.Sheets[sn]);
             const parsed=parseFile(`${file.name} ${sn}`,csv);
+            setSomCavoRows(prev=>[...prev,...parsed.filter(r=>r.tipo_doc==="somcavo")]);
             varanda=[...varanda,...parsed.filter(r=>r.tipo_doc==="varanda")];
-            planilhas=[...planilhas,...parsed.filter(r=>r.tipo_doc!=="varanda")];
+            planilhas=[...planilhas,...parsed.filter(r=>r.tipo_doc!=="varanda"&&r.tipo_doc!=="somcavo")];
           }
         } else if(ext==="docx"){
           const buf=await file.arrayBuffer();
@@ -689,12 +800,16 @@ export default function App(){
   const fvsScopedRows=useMemo(()=>fvsTorreFilter==="TODAS"?fvsRows:fvsRows.filter(r=>r.torre===fvsTorreFilter),[fvsRows,fvsTorreFilter]);
   const fvsCurrent=useMemo(()=>calcFvs(fvsScopedRows,fvsTab),[fvsScopedRows,fvsTab]);
 
+  const somCavoTorres=useMemo(()=>["TODAS",...[...new Set(somCavoRows.map(r=>r.torre).filter(Boolean))].sort()],[somCavoRows]);
+  const somCavoScoped=useMemo(()=>somCavoTorreFilter==="TODAS"?somCavoRows:somCavoRows.filter(r=>r.torre===somCavoTorreFilter),[somCavoRows,somCavoTorreFilter]);
+  const somCavoData=useMemo(()=>calcSomCavo(somCavoScoped),[somCavoScoped]);
+
   const varandaTorres=useMemo(()=>["TODAS",...[...new Set(varandaRows.map(r=>r.torre).filter(Boolean))].sort()],[varandaRows]);
   const varandaScoped=useMemo(()=>varandaTorreFilter==="TODAS"?varandaRows:varandaRows.filter(r=>r.torre===varandaTorreFilter),[varandaRows,varandaTorreFilter]);
   const varandaData=useMemo(()=>calcVaranda(varandaScoped),[varandaScoped]);
 
   const MAIN_TABS=[{id:"planilhas",label:"📊 Planilhas"},{id:"fvs",label:"📋 FVS"}];
-  const PLAN_TABS=[{id:"shafts",label:"🔲 Shafts"},{id:"capiacos",label:"🏗 Capiaços"},{id:"passantes",label:"🔧 Passantes"},{id:"esquadrias",label:"🪟 Esquadrias"},{id:"varanda",label:"🟫 Cerâmica Varanda"}];
+  const PLAN_TABS=[{id:"shafts",label:"🔲 Shafts"},{id:"capiacos",label:"🏗 Capiaços"},{id:"passantes",label:"🔧 Passantes"},{id:"esquadrias",label:"🪟 Esquadrias"},{id:"varanda",label:"🟫 Cerâmica Varanda"},{id:"somcavo",label:"🔊 Som Cavo"}];
   const selStyle={background:"#0f172a",color:C.white,border:`1px solid ${C.border}`,borderRadius:7,padding:"7px 11px",fontSize:12};
   const torreLabel=t=>t==="TODAS"?"Todas as torres":`Torre ${t}`;
 
@@ -776,8 +891,71 @@ export default function App(){
               </Box>
               {varandaData.aptoTable.length>0&&<Box title={`Por Apartamento — Cerâmica Varanda — ${torreLabel(varandaTorreFilter)}`}><TabelaVarandaApto aptoTable={varandaData.aptoTable}/></Box>}
             </>}
-          </>}
-          {allRows.length===0&&varandaRows.length===0&&<div style={{textAlign:"center",padding:"40px",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>📊</div><div>Carregue os arquivos CSV/XLSX das planilhas.</div></div>}
+            {planTab==="somcavo"&&<>
+              <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8,marginTop:16,marginBottom:4}}>
+                {somCavoRows.length>0&&<>
+                  <span style={{fontSize:11,color:C.muted}}>TORRE</span>
+                  <select value={somCavoTorreFilter} onChange={e=>setSomCavoTorreFilter(e.target.value)} style={selStyle}>
+                    {somCavoTorres.map(t=><option key={t} value={t}>{torreLabel(t)}</option>)}
+                  </select>
+                </>}
+              </div>
+              {somCavoRows.length>0?<>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:14,marginBottom:4}}>
+                  <KPI label="Total pedras reprovadas" value={somCavoData.totalPedras} sub="incidências de som cavo" color={C.bad}/>
+                  <KPI label="Ambientes reprovados" value={somCavoData.totalAmbReprov} sub={`de ${somCavoData.totalAmbVerif} verificados`} color={C.orange}/>
+                  <KPI label="% ambientes c/ som cavo" value={`${somCavoData.totalAmbVerif?Math.round(somCavoData.totalAmbReprov/somCavoData.totalAmbVerif*100):0}%`} sub="sobre verificados" color={C.warn}/>
+                </div>
+                <Box title={`Pedras reprovadas por ambiente — ${torreLabel(somCavoTorreFilter)}`}>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {somCavoData.paretoAmb.filter(p=>p.pedras>0).map((p,i)=>{
+                      const max=somCavoData.paretoAmb[0]?.pedras||1;
+                      return(
+                        <div key={i} style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{width:160,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{p.ambiente}</div>
+                          <div style={{flex:1,background:"#0f172a",borderRadius:4,height:24,position:"relative"}}>
+                            <div style={{width:`${(p.pedras/max)*100}%`,background:p.pct>=50?C.bad:p.pct>=25?C.orange:C.warn,height:"100%",borderRadius:4}}/>
+                            <span style={{position:"absolute",right:8,top:4,fontSize:11,color:C.white,fontWeight:"bold"}}>{p.pedras} pedras · {p.ambReprov}/{p.ambTotal} amb. ({p.pct}%)</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Box>
+                <Box title={`Por Torre — Som Cavo — ${torreLabel(somCavoTorreFilter)}`}>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse"}}>
+                      <thead><tr><TH c="Torre"/><TH c="Pedras reprov."/><TH c="Amb. reprov."/><TH c="Amb. verif."/><TH c="% amb. c/ som cavo"/><TH c="N/V"/></tr></thead>
+                      <tbody>{somCavoData.torreTable.map((t,i)=>(
+                        <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
+                          <TD c={`Torre ${t.torre}`} color={C.accent} bold/>
+                          <TD c={t.pedras} color={t.pedras>0?C.bad:C.ok} bold/>
+                          <TD c={t.ambReprov} color={t.ambReprov>0?C.orange:C.ok}/>
+                          <TD c={t.ambTotal}/>
+                          <TD c={`${t.pct}%`} bold color={t.pct>=50?C.bad:t.pct>=25?C.orange:C.ok}/>
+                          <TD c={t.nv} color={C.muted}/>
+                        </tr>))}</tbody>
+                    </table>
+                  </div>
+                </Box>
+                <Box title={`Aptos com maior incidência — ${torreLabel(somCavoTorreFilter)}`}>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+                      <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Pedras reprov."/><TH c="Amb. reprov."/><TH c="Ambientes c/ problema"/></tr></thead>
+                      <tbody>{somCavoData.aptoTable.map((r,i)=>(
+                        <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
+                          <TD c={r.torre} color={C.accent} bold/>
+                          <TD c={r.apto} bold/>
+                          <TD c={r.pav}/>
+                          <TD c={r.pedras} color={C.bad} bold/>
+                          <TD c={r.ambReprov} color={C.orange}/>
+                          <TD c={r.ambientes||"—"} color={C.warn}/>
+                        </tr>))}</tbody>
+                    </table>
+                  </div>
+                </Box>
+              </>:<div style={{textAlign:"center",padding:"40px",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>🔊</div><div>Carregue o arquivo de mapeamento FVS cerâmica (som cavo).</div></div>}
+            </>}
         </>}
 
         {/* ── FVS ── */}
