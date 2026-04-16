@@ -138,12 +138,20 @@ function parseCeramicaVaranda(rows, fileName){
 function detectTipo(fileName, rows){
   const head = rows.slice(0,8).flat().join(" ").toLowerCase();
   const fn   = fileName.toLowerCase();
+  // Nome do arquivo tem prioridade
   if (/shaft/i.test(fn))         return "shaft";
   if (/capiaç|capiac/i.test(fn)) return "capiacos";
   if (/passante/i.test(fn))      return "passantes";
   if (/esquadria/i.test(fn))     return "esquadrias";
   if (/cerâmica.*varanda|varanda.*cerâmica|mapeamento.*varanda/i.test(fn)) return "varanda";
-  if (/\b(ab|cd|casarão|casarao)\b/i.test(fn)) return "shaft";
+  // Nome da aba indica shaft: AB, CD, Casarão
+  if (/\b(ab|cd)\b/i.test(fn))   return "shaft";
+  if (/casar/i.test(fn))         return "shaft";
+  // Conteúdo indica Casarão (Copa, Hall, Shaft)
+  if (/casarão|casarao/i.test(head))                           return "shaft";
+  if (/copa.*\d|hall\s*\d|academia|brinquedo|festas/i.test(head)) return "shaft";
+  if (/shaft\s*\d/i.test(head))                                return "shaft";
+  // Conteúdo indica outros tipos
   if (/shafts|mapeamento.*shaft/i.test(head))  return "shaft";
   if (/verifica.*capiaç|capiaç.*verifica/i.test(head)) return "capiacos";
   if (/verifica.*passante|passante.*verifica/i.test(head)) return "passantes";
