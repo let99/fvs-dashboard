@@ -666,7 +666,7 @@ export default function App(){
   const capData   =useMemo(()=>calcTipo(scoped,"capiacos"),  [scoped]);
   const passData  =useMemo(()=>calcTipo(scoped,"passantes"), [scoped]);
   const esqData   =useMemo(()=>calcTipo(scoped,"esquadrias"),[scoped]);
-  const shaftTotal=Object.values(shaftData.counts).reduce((a,b)=>a+b,0), shaftAberto=shaftData.counts["A"]||0;
+  const shaftTotal=Object.values(shaftData.counts).reduce((a,b)=>a+b,0)-(shaftData.counts["N/A"]||0), shaftAberto=shaftData.counts["A"]||0;
   const capTotal=Object.values(capData.counts).reduce((a,b)=>a+b,0), capProb=(capData.counts["Q"]||0)+(capData.counts["N"]||0)+(capData.counts["Q.I"]||0)+(capData.counts["F"]||0);
   const passTotal=Object.values(passData.counts).reduce((a,b)=>a+b,0), passProb=passTotal-(passData.counts["OK"]||0)-(passData.counts["N/V"]||0);
   const esqTotal=Object.values(esqData.counts).reduce((a,b)=>a+b,0), esqInst=esqData.counts["E"]||0;
