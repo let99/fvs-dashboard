@@ -114,6 +114,7 @@ function parseCeramicaVaranda(rows, fileName){
     {col:5,torre:"C",suf:"02"},{col:6,torre:"C",suf:"01"},
     {col:7,torre:"D",suf:"02"},{col:8,torre:"D",suf:"01"},
   ];
+  const VALID=new Set(["S","N","C","R"]);
   const dataStart = rows.findIndex(r => /^[1-9]\d?$/.test(san(r[0])));
   if(dataStart === -1) return result;
   for(let i=dataStart; i<rows.length; i++){
@@ -124,7 +125,7 @@ function parseCeramicaVaranda(rows, fileName){
     if(andar < 1 || andar > 30) break;
     COL_MAP.forEach(({col,torre,suf})=>{
       const val = san(r[col]).toUpperCase();
-      if(!["S","N","C"].includes(val)) return;
+      if(!VALID.has(val)) return;
       result.push({ tipo_doc:"varanda", servico:"varanda", torre, apto:`${andar}${suf}`, pav:`${andar}º`, status:val, fonte:fileName });
     });
   }
@@ -421,11 +422,17 @@ function calcVaranda(rows){
   const byTorre={};
   filtered.forEach(r=>{
     const t=r.torre||"?";
-    if(!byTorre[t]) byTorre[t]={torre:t,S:0,C:0,N:0,total:0};
+    if(!byTorre[t]) byTorre[t]={torre:t,S:0,C:0,N:0,R:0,total:0};
     byTorre[t][r.status]=(byTorre[t][r.status]||0)+1;
     byTorre[t].total++;
   });
-  const torreTable=Object.values(byTorre).map(x=>({...x,executado:x.S+x.C,pct:x.total?Math.round((x.S+x.C)/x.total*100):0})).sort((a,b)=>a.torre.localeCompare(b.torre));
+  // S e C = finalizado, N e R = pendente
+  const torreTable=Object.values(byTorre).map(x=>({
+    ...x,
+    executado: x.S+x.C,
+    pendente:  x.N+x.R,
+    pct: x.total?Math.round((x.S+x.C)/x.total*100):0,
+  })).sort((a,b)=>a.torre.localeCompare(b.torre));
   const byApto={};
   filtered.forEach(r=>{
     const key=`${r.torre}-${r.apto}`;
@@ -475,7 +482,9 @@ function VarandaProgressBars({torreTable}){
           <div style={{width:`${t.pct}%`,background:t.pct>=80?C.ok:t.pct>=50?C.warn:C.bad,height:"100%",borderRadius:6,transition:"width .4s"}}/>
           <span style={{position:"absolute",right:10,top:5,fontSize:12,color:C.white,fontWeight:"bold"}}>{t.executado}/{t.total} ({t.pct}%)</span>
         </div>
-        <div style={{width:90,fontSize:11,color:C.muted,flexShrink:0}}>S:{t.S} C:{t.C} N:{t.N}</div>
+        <div style={{width:130,fontSize:11,color:C.muted,flexShrink:0}}>
+          S:{t.S} C:{t.C} N:{t.N} R:{t.R}
+        </div>
       </div>))}
   </div>);
 }
@@ -548,8 +557,8 @@ function TabelaFvsApto({aptoTable}){
 
 function TabelaVarandaApto({aptoTable}){
   if(!aptoTable.length) return <p style={{color:C.muted}}>Sem dados.</p>;
-  const sc={S:C.ok,C:C.blue,N:C.bad};
-  const sl={S:"Aplicada",C:"Crédito",N:"Não aplicada"};
+  const sc={S:C.ok,C:C.blue,N:C.bad,R:C.orange};
+  const sl={S:"Finalizado",C:"Crédito (finalizado)",N:"Pendente",R:"Reforma (pendente)"};
   return(<div style={{overflowX:"auto"}}>
     <table style={{width:"100%",borderCollapse:"collapse",minWidth:500}}>
       <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Status"/></tr></thead>
@@ -731,7 +740,11 @@ export default function App(){
               {PLAN_TABS.map(t=>(<button key={t.id} onClick={()=>setPlanTab(t.id)} style={{background:planTab===t.id?C.blue:"transparent",color:planTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:planTab===t.id?"bold":"normal",fontSize:13}}>{t.label}</button>))}
             </div>
 
-            {planTab==="shafts"&&<><Box title={`Distribuição — Shafts — ${torreLabel(torreFilter)}`}><BarChart counts={shaftData.counts} labels={CLASS.shaft.labels} colors={CLASS.shaft.colors}/></Box><Box title="Por Torre — Shafts"><TabelaTorre data={shaftData}/></Box><Box title={`Por Apartamento — Shafts — ${torreLabel(torreFilter)}`}><TabelaApto data={shaftData}/></Box></>}
+            {planTab==="shafts"&&<>
+              <Box title={`Distribuição — Shafts — ${torreLabel(torreFilter)}`}><BarChart counts={shaftData.counts} labels={CLASS.shaft.labels} colors={CLASS.shaft.colors}/></Box>
+              <Box title="Por Torre — Shafts"><TabelaTorre data={shaftData}/></Box>
+              <Box title={`Por Apartamento — Shafts — ${torreLabel(torreFilter)}`}><TabelaApto data={shaftData}/></Box>
+            </>}
             {planTab==="capiacos"&&<><Box title={`Distribuição — Capiaços — ${torreLabel(torreFilter)}`}><BarChart counts={capData.counts} labels={CLASS.capiacos.labels} colors={CLASS.capiacos.colors}/></Box><Box title="Por Torre — Capiaços"><TabelaTorre data={capData}/></Box><Box title={`Por Apartamento — Capiaços — ${torreLabel(torreFilter)}`}><TabelaApto data={capData}/></Box></>}
             {planTab==="passantes"&&<><Box title={`Distribuição — Passantes — ${torreLabel(torreFilter)}`}><BarChart counts={passData.counts} labels={CLASS.passantes.labels} colors={CLASS.passantes.colors}/></Box><Box title="Por Torre — Passantes"><TabelaTorre data={passData}/></Box><Box title={`Por Apartamento — Passantes — ${torreLabel(torreFilter)}`}><TabelaApto data={passData}/></Box></>}
             {planTab==="esquadrias"&&<><Box title={`Distribuição — Esquadrias — ${torreLabel(torreFilter)}`}><BarChart counts={esqData.counts} labels={CLASS.esquadrias.labels} colors={CLASS.esquadrias.colors}/></Box><Box title="Por Torre — Esquadrias"><TabelaTorre data={esqData}/></Box><Box title={`Por Apartamento — Esquadrias — ${torreLabel(torreFilter)}`}><TabelaApto data={esqData}/></Box></>}
