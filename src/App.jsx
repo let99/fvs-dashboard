@@ -491,8 +491,21 @@ function calcVaranda(rows){
   return{torreTable,aptoTable,total,exec,pctGeral:total?Math.round(exec/total*100):0};
 }
 
+// ─── Pedras previstas por torre × ambiente (Tipo01 + Tipo02) ─────────────
+// Ordem: VARANDA, SALA, COZINHA, ÁREA DE SERVIÇO, DEPÓSITO, BWC SERVIÇO,
+//        LAVABO, BWC SUÍTE 01 E 02, BWC SUÍTE 03, BWC SUÍTE MASTER
+const PEDRAS_PREVISTAS = {
+  A: [203+203, 279+686, 816+2002, 30+70,  207+469, 252+588, 309+770, 357+700, 336+763, 0],
+  B: [58+87,   198+285, 506+861,  18+39,  142+243, 166+252, 246+327, 186+345, 230+360, 0],
+  C: [56+84,   180+270, 366+549,  138+207,22+33,   158+237, 172+258, 220+330, 210+315, 206+309],
+  D: [112+84,  360+270, 732+549,  276+207,44+33,   316+237, 344+258, 440+330, 420+315, 412+309],
+};
+
 function calcSomCavo(rows){
   const filtered=rows.filter(r=>r.tipo_doc==="somcavo");
+
+  // Total de pedras verificadas por torre×ambiente = soma dos previstas de aptos verificados
+  // Simplificado: usamos PEDRAS_PREVISTAS como denominador total (já inclui nº FVS feitas)
   const byAmb={};
   filtered.forEach(r=>{
     if(!byAmb[r.ambiente]) byAmb[r.ambiente]={ambiente:r.ambiente,pedras:0,ambReprov:0,ambTotal:0,nvCount:0};
@@ -501,7 +514,22 @@ function calcSomCavo(rows){
     byAmb[r.ambiente].pedras+=r.pedras||0;
     if(r.status==="R") byAmb[r.ambiente].ambReprov++;
   });
-  const paretoAmb=Object.values(byAmb).map(x=>({...x,pct:x.ambTotal?Math.round(x.ambReprov/x.ambTotal*100):0})).sort((a,b)=>b.pedras-a.pedras);
+
+  // % pedras = pedras reprovadas / total pedras previstas (soma todas as torres)
+  const paretoAmb=Object.values(byAmb).map(x=>{
+    const ambIdx=SOMCAVO_AMBIENTES.indexOf(x.ambiente);
+    const totalPrev=ambIdx>=0
+      ? Object.values(PEDRAS_PREVISTAS).reduce((s,arr)=>s+(arr[ambIdx]||0),0)
+      : 0;
+    return{
+      ...x,
+      totalPrev,
+      pctPedras: totalPrev>0 ? parseFloat((x.pedras/totalPrev*100).toFixed(2)) : 0,
+      pctAmb:    x.ambTotal  ? Math.round(x.ambReprov/x.ambTotal*100) : 0,
+    };
+  }).sort((a,b)=>b.pedras-a.pedras);
+
+  // Por torre
   const byTorre={};
   filtered.forEach(r=>{
     const t=r.torre||"?";
@@ -511,7 +539,18 @@ function calcSomCavo(rows){
     byTorre[t].pedras+=r.pedras||0;
     if(r.status==="R") byTorre[t].ambReprov++;
   });
-  const torreTable=Object.values(byTorre).map(x=>({...x,pct:x.ambTotal?Math.round(x.ambReprov/x.ambTotal*100):0})).sort((a,b)=>a.torre.localeCompare(b.torre));
+  const torreTable=Object.values(byTorre).map(x=>{
+    const totalPrev=PEDRAS_PREVISTAS[x.torre]
+      ? PEDRAS_PREVISTAS[x.torre].reduce((s,v)=>s+v,0)
+      : 0;
+    return{
+      ...x,
+      totalPrev,
+      pctPedras: totalPrev>0 ? parseFloat((x.pedras/totalPrev*100).toFixed(2)) : 0,
+    };
+  }).sort((a,b)=>a.torre.localeCompare(b.torre));
+
+  // Por apto
   const byApto={};
   filtered.forEach(r=>{
     const key=`${r.torre}-${r.apto}`;
@@ -521,11 +560,18 @@ function calcSomCavo(rows){
     byApto[key].pedras+=r.pedras||0;
     if(r.status==="R"){byApto[key].ambReprov++;byApto[key].ambientes.add(r.ambiente);}
   });
-  const aptoTable=Object.values(byApto).filter(x=>x.pedras>0||x.ambReprov>0).map(x=>({...x,ambientes:[...x.ambientes].join(", ")})).sort((a,b)=>b.pedras-a.pedras);
-  const totalPedras=filtered.filter(r=>r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
+  const aptoTable=Object.values(byApto).filter(x=>x.pedras>0||x.ambReprov>0)
+    .map(x=>({...x,ambientes:[...x.ambientes].join(", ")}))
+    .sort((a,b)=>b.pedras-a.pedras);
+
+  // Totais gerais
+  const totalPedrasReprov=filtered.filter(r=>r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
+  const totalPrevGeral=Object.values(PEDRAS_PREVISTAS).reduce((s,arr)=>s+arr.reduce((a,b)=>a+b,0),0);
   const totalAmbReprov=filtered.filter(r=>r.status==="R").length;
   const totalAmbVerif=filtered.filter(r=>r.status!=="N/V").length;
-  return{paretoAmb,torreTable,aptoTable,totalPedras,totalAmbReprov,totalAmbVerif};
+  const pctGeralPedras=totalPrevGeral>0?parseFloat((totalPedrasReprov/totalPrevGeral*100).toFixed(2)):0;
+
+  return{paretoAmb,torreTable,aptoTable,totalPedrasReprov,totalPrevGeral,totalAmbReprov,totalAmbVerif,pctGeralPedras};
 }
 
 // ─── Componentes UI ───────────────────────────────────────────────────────
@@ -842,7 +888,7 @@ export default function App(){
                   <KPI label="Passantes c/ Problema" value={passProb} sub={`de ${passTotal}`} color={passProb>0?C.bad:C.ok}/>
                   <KPI label="Esquadrias Instaladas" value={`${esqInst}/${esqTotal}`} sub={`${esqTotal?Math.round(esqInst/esqTotal*100):0}%`} color={C.blue}/>
                   <KPI label="Varanda c/ Cerâmica"   value={`${varandaData.exec}/${varandaData.total}`} sub={`${varandaData.pctGeral}% executado`} color={varandaData.pctGeral>=80?C.ok:C.warn}/>
-                  <KPI label="Som Cavo — Pedras"     value={somCavoData.totalPedras} sub={`${somCavoData.totalAmbReprov} ambientes`} color={C.bad}/>
+                  <KPI label="Som Cavo" value={`${somCavoData.pctGeralPedras}%`} sub={`${somCavoData.totalPedrasReprov} pedras reprov.`} color={C.bad}/>
                 </div>
                 <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`,flexWrap:"wrap"}}>
                   {PLAN_TABS.map(t=>(<button key={t.id} onClick={()=>setPlanTab(t.id)} style={{background:planTab===t.id?C.blue:"transparent",color:planTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:planTab===t.id?"bold":"normal",fontSize:13}}>{t.label}</button>))}
@@ -909,9 +955,9 @@ export default function App(){
                     {somCavoRows.length>0 ? (
                       <div>
                         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:14,marginBottom:4}}>
-                          <KPI label="Total pedras reprovadas" value={somCavoData.totalPedras} sub="incidências de som cavo" color={C.bad}/>
+                          <KPI label="Pedras reprovadas" value={somCavoData.totalPedrasReprov} sub={`de ${somCavoData.totalPrevGeral} previstas`} color={C.bad}/>
+                          <KPI label="% pedras c/ som cavo" value={`${somCavoData.pctGeralPedras}%`} sub="pedras reprov / previstas" color={somCavoData.pctGeralPedras>=5?C.bad:somCavoData.pctGeralPedras>=2?C.orange:C.warn}/>
                           <KPI label="Ambientes reprovados" value={somCavoData.totalAmbReprov} sub={`de ${somCavoData.totalAmbVerif} verificados`} color={C.orange}/>
-                          <KPI label="% ambientes c/ som cavo" value={`${somCavoData.totalAmbVerif?Math.round(somCavoData.totalAmbReprov/somCavoData.totalAmbVerif*100):0}%`} sub="sobre verificados" color={C.warn}/>
                         </div>
                         <Box title={`Pedras reprovadas por ambiente — ${torreLabel(somCavoTorreFilter)}`}>
                           <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -921,8 +967,8 @@ export default function App(){
                                 <div key={i} style={{display:"flex",alignItems:"center",gap:10}}>
                                   <div style={{width:160,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{p.ambiente}</div>
                                   <div style={{flex:1,background:"#0f172a",borderRadius:4,height:24,position:"relative"}}>
-                                    <div style={{width:`${(p.pedras/max)*100}%`,background:p.pct>=50?C.bad:p.pct>=25?C.orange:C.warn,height:"100%",borderRadius:4}}/>
-                                    <span style={{position:"absolute",right:8,top:4,fontSize:11,color:C.white,fontWeight:"bold"}}>{p.pedras} pedras · {p.ambReprov}/{p.ambTotal} amb. ({p.pct}%)</span>
+                                    <div style={{width:`${(p.pedras/max)*100}%`,background:p.pctPedras>=5?C.bad:p.pctPedras>=2?C.orange:C.warn,height:"100%",borderRadius:4}}/>
+                                    <span style={{position:"absolute",right:8,top:4,fontSize:11,color:C.white,fontWeight:"bold"}}>{p.pedras} pedras ({p.pctPedras}% de {p.totalPrev} prev.)</span>
                                   </div>
                                 </div>
                               );
@@ -932,14 +978,14 @@ export default function App(){
                         <Box title={`Por Torre — Som Cavo — ${torreLabel(somCavoTorreFilter)}`}>
                           <div style={{overflowX:"auto"}}>
                             <table style={{width:"100%",borderCollapse:"collapse"}}>
-                              <thead><tr><TH c="Torre"/><TH c="Pedras reprov."/><TH c="Amb. reprov."/><TH c="Amb. verif."/><TH c="% amb. c/ som cavo"/><TH c="N/V"/></tr></thead>
+                              <thead><tr><TH c="Torre"/><TH c="Pedras reprov."/><TH c="Pedras previstas"/><TH c="% pedras c/ som cavo"/><TH c="Amb. reprov."/><TH c="N/V"/></tr></thead>
                               <tbody>{somCavoData.torreTable.map((t,i)=>(
                                 <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
                                   <TD c={`Torre ${t.torre}`} color={C.accent} bold/>
                                   <TD c={t.pedras} color={t.pedras>0?C.bad:C.ok} bold/>
+                                  <TD c={t.totalPrev} color={C.muted}/>
+                                  <TD c={`${t.pctPedras}%`} bold color={t.pctPedras>=5?C.bad:t.pctPedras>=2?C.orange:C.ok}/>
                                   <TD c={t.ambReprov} color={t.ambReprov>0?C.orange:C.ok}/>
-                                  <TD c={t.ambTotal}/>
-                                  <TD c={`${t.pct}%`} bold color={t.pct>=50?C.bad:t.pct>=25?C.orange:C.ok}/>
                                   <TD c={t.nv} color={C.muted}/>
                                 </tr>))}
                               </tbody>
