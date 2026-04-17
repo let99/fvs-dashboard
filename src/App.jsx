@@ -138,12 +138,17 @@ const SOMCAVO_AMBIENTES=["VARANDA","SALA","COZINHA","ÁREA DE SERVIÇO","DEPÓSI
 
 function parseSomCavo(rows, fileName){
   const result=[];
+
+  // Encontra TODOS os blocos de cabeçalho APTO+TORRE separadamente
+  // Cada bloco tem seu próprio intervalo de linhas de dados
   const headerIdxs=rows.reduce((acc,r,i)=>{
     if(r.some(c=>/^apto$/i.test(san(c)))&&r.some(c=>/^torre$/i.test(san(c)))) acc.push(i);
     return acc;
   },[]);
-  for(const hi of headerIdxs){
+
+  headerIdxs.forEach((hi, hIdx)=>{
     const hRow=rows[hi];
+    // Detecta blocos lado a lado na MESMA linha de cabeçalho
     const blocos=[];
     hRow.forEach((cell,ci)=>{
       if(!/^apto$/i.test(san(cell))) return;
@@ -154,15 +159,21 @@ function parseSomCavo(rows, fileName){
         }
       }
     });
-    if(!blocos.length) continue;
-    for(let i=hi+1;i<rows.length;i++){
+    if(!blocos.length) return;
+
+    // Limite inferior: até o próximo cabeçalho ou fim do arquivo
+    const nextHi = headerIdxs[hIdx+1] ?? rows.length;
+
+    for(let i=hi+1; i<nextHi; i++){
       const r=rows[i];
       if(r.every(c=>!san(c))) continue;
+
       for(const b of blocos){
         const apto=san(r[b.aptoCol]);
         const torre=san(r[b.torreCol]).toUpperCase();
         if(!/^\d{3,4}$/.test(apto)) continue;
         if(!/^[A-D]$/.test(torre)) continue;
+
         SOMCAVO_AMBIENTES.forEach((amb,j)=>{
           const raw=san(r[b.ambStart+j]);
           if(!raw||raw==="") return;
@@ -176,7 +187,8 @@ function parseSomCavo(rows, fileName){
         });
       }
     }
-  }
+  });
+
   return result;
 }
 
