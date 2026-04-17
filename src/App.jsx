@@ -493,10 +493,10 @@ function calcVaranda(rows){
 
 // Totais fixos lidos diretamente da planilha
 const SOMCAVO_SUMMARY = {
-  A: { verif:93,  reprov:21, total:220, nv:7  },
-  B: { verif:48,  reprov:6,  total:220, nv:2  },
-  C: { verif:40,  reprov:15, total:220, nv:10 },
-  D: { verif:56,  reprov:26, total:220, nv:4  },
+  A: { verif:93,  reprov:21, total:220, nv:7,  pctPedras:0.84 },
+  B: { verif:48,  reprov:6,  total:220, nv:2,  pctPedras:0.70 },
+  C: { verif:40,  reprov:15, total:220, nv:10, pctPedras:1.94 },
+  D: { verif:56,  reprov:26, total:220, nv:4,  pctPedras:1.67 },
 };
 // Ordem: VARANDA, SALA, COZINHA, ÁREA DE SERVIÇO, DEPÓSITO, BWC SERVIÇO,
 //        LAVABO, BWC SUÍTE 01 E 02, BWC SUÍTE 03, BWC SUÍTE MASTER
@@ -513,19 +513,13 @@ function calcSomCavo(rows, summary={}){
   const usedSummary=Object.keys(summary).length>0 ? summary : SOMCAVO_SUMMARY;
 
   // Totais por torre vindos direto da planilha
-  const torreTable=Object.entries(usedSummary).map(([torre,s])=>{
-    const pedras=filtered.filter(r=>r.torre===torre&&r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
-    const totalPrev=PEDRAS_PREVISTAS[torre]?PEDRAS_PREVISTAS[torre].reduce((a,b)=>a+b,0):0;
-    return{
-      torre, pedras,
-      verif:  s.verif,
-      reprov: s.reprov,
-      total:  s.total,
-      nv:     s.nv,
-      totalPrev,
-      pctPedras: totalPrev>0?parseFloat((pedras/totalPrev*100).toFixed(2)):0,
-    };
-  }).sort((a,b)=>a.torre.localeCompare(b.torre));
+  const torreTable=Object.entries(usedSummary)
+    .filter(([torre])=>torresPresentes.size===0||torresPresentes.has(torre))
+    .map(([torre,s])=>{
+      const pedras=filtered.filter(r=>r.torre===torre&&r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
+      const totalPrev=PEDRAS_PREVISTAS[torre]?PEDRAS_PREVISTAS[torre].reduce((a,b)=>a+b,0):0;
+      return{ torre, pedras, verif:s.verif, reprov:s.reprov, total:s.total, nv:s.nv, totalPrev, pctPedras:s.pctPedras };
+    }).sort((a,b)=>a.torre.localeCompare(b.torre));
 
   // Por ambiente
   const byAmb={};
