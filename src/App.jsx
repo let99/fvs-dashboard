@@ -503,52 +503,37 @@ const PEDRAS_PREVISTAS = {
 
 function calcSomCavo(rows){
   const filtered=rows.filter(r=>r.tipo_doc==="somcavo");
+  const summary=rows._summary||{};
 
-  // Total de pedras verificadas por torre×ambiente = soma dos previstas de aptos verificados
-  // Simplificado: usamos PEDRAS_PREVISTAS como denominador total (já inclui nº FVS feitas)
+  // Totais por torre vindos direto da planilha
+  const torreTable=Object.entries(summary).map(([torre,s])=>{
+    const pedras=filtered.filter(r=>r.torre===torre&&r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
+    const totalPrev=PEDRAS_PREVISTAS[torre]?PEDRAS_PREVISTAS[torre].reduce((a,b)=>a+b,0):0;
+    return{
+      torre, pedras,
+      verif:  s.verif,
+      reprov: s.reprov,
+      total:  s.total,
+      nv:     s.nv,
+      totalPrev,
+      pctPedras: totalPrev>0?parseFloat((pedras/totalPrev*100).toFixed(2)):0,
+    };
+  }).sort((a,b)=>a.torre.localeCompare(b.torre));
+
+  // Por ambiente
   const byAmb={};
   filtered.forEach(r=>{
-    if(!byAmb[r.ambiente]) byAmb[r.ambiente]={ambiente:r.ambiente,pedras:0,ambReprov:0,ambTotal:0,nvCount:0};
-    if(r.status==="N/V"){byAmb[r.ambiente].nvCount++;return;}
+    if(!byAmb[r.ambiente]) byAmb[r.ambiente]={ambiente:r.ambiente,pedras:0,ambReprov:0,ambTotal:0};
+    if(r.status==="N/V") return;
     byAmb[r.ambiente].ambTotal++;
     byAmb[r.ambiente].pedras+=r.pedras||0;
     if(r.status==="R") byAmb[r.ambiente].ambReprov++;
   });
-
-  // % pedras = pedras reprovadas / total pedras previstas (soma todas as torres)
   const paretoAmb=Object.values(byAmb).map(x=>{
     const ambIdx=SOMCAVO_AMBIENTES.indexOf(x.ambiente);
-    const totalPrev=ambIdx>=0
-      ? Object.values(PEDRAS_PREVISTAS).reduce((s,arr)=>s+(arr[ambIdx]||0),0)
-      : 0;
-    return{
-      ...x,
-      totalPrev,
-      pctPedras: totalPrev>0 ? parseFloat((x.pedras/totalPrev*100).toFixed(2)) : 0,
-      pctAmb:    x.ambTotal  ? Math.round(x.ambReprov/x.ambTotal*100) : 0,
-    };
+    const totalPrev=ambIdx>=0?Object.values(PEDRAS_PREVISTAS).reduce((s,arr)=>s+(arr[ambIdx]||0),0):0;
+    return{...x,totalPrev,pctPedras:totalPrev>0?parseFloat((x.pedras/totalPrev*100).toFixed(2)):0};
   }).sort((a,b)=>b.pedras-a.pedras);
-
-  // Por torre
-  const byTorre={};
-  filtered.forEach(r=>{
-    const t=r.torre||"?";
-    if(!byTorre[t]) byTorre[t]={torre:t,pedras:0,ambReprov:0,ambTotal:0,nv:0};
-    if(r.status==="N/V"){byTorre[t].nv++;return;}
-    byTorre[t].ambTotal++;
-    byTorre[t].pedras+=r.pedras||0;
-    if(r.status==="R") byTorre[t].ambReprov++;
-  });
-  const torreTable=Object.values(byTorre).map(x=>{
-    const totalPrev=PEDRAS_PREVISTAS[x.torre]
-      ? PEDRAS_PREVISTAS[x.torre].reduce((s,v)=>s+v,0)
-      : 0;
-    return{
-      ...x,
-      totalPrev,
-      pctPedras: totalPrev>0 ? parseFloat((x.pedras/totalPrev*100).toFixed(2)) : 0,
-    };
-  }).sort((a,b)=>a.torre.localeCompare(b.torre));
 
   // Por apto
   const byApto={};
@@ -564,11 +549,11 @@ function calcSomCavo(rows){
     .map(x=>({...x,ambientes:[...x.ambientes].join(", ")}))
     .sort((a,b)=>b.pedras-a.pedras);
 
-  // Totais gerais
+  // Totais gerais — usa summary quando disponível
+  const totalAmbVerif=Object.values(summary).reduce((s,x)=>s+x.verif,0)||filtered.filter(r=>r.status!=="N/V").length;
+  const totalAmbReprov=Object.values(summary).reduce((s,x)=>s+x.reprov,0)||filtered.filter(r=>r.status==="R").length;
   const totalPedrasReprov=filtered.filter(r=>r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
   const totalPrevGeral=Object.values(PEDRAS_PREVISTAS).reduce((s,arr)=>s+arr.reduce((a,b)=>a+b,0),0);
-  const totalAmbReprov=filtered.filter(r=>r.status==="R").length;
-  const totalAmbVerif=filtered.filter(r=>r.status!=="N/V").length;
   const pctGeralPedras=totalPrevGeral>0?parseFloat((totalPedrasReprov/totalPrevGeral*100).toFixed(2)):0;
 
   return{paretoAmb,torreTable,aptoTable,totalPedrasReprov,totalPrevGeral,totalAmbReprov,totalAmbVerif,pctGeralPedras};
