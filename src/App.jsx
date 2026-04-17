@@ -491,7 +491,13 @@ function calcVaranda(rows){
   return{torreTable,aptoTable,total,exec,pctGeral:total?Math.round(exec/total*100):0};
 }
 
-// ─── Pedras previstas por torre × ambiente (Tipo01 + Tipo02) ─────────────
+// Totais fixos lidos diretamente da planilha
+const SOMCAVO_SUMMARY = {
+  A: { verif:93,  reprov:21, total:220, nv:7  },
+  B: { verif:48,  reprov:6,  total:220, nv:2  },
+  C: { verif:40,  reprov:15, total:220, nv:10 },
+  D: { verif:56,  reprov:26, total:220, nv:4  },
+};
 // Ordem: VARANDA, SALA, COZINHA, ÁREA DE SERVIÇO, DEPÓSITO, BWC SERVIÇO,
 //        LAVABO, BWC SUÍTE 01 E 02, BWC SUÍTE 03, BWC SUÍTE MASTER
 const PEDRAS_PREVISTAS = {
@@ -503,9 +509,11 @@ const PEDRAS_PREVISTAS = {
 
 function calcSomCavo(rows, summary={}){
   const filtered=rows.filter(r=>r.tipo_doc==="somcavo");
+  // Usa summary fixo se o dinâmico não tiver dados
+  const usedSummary=Object.keys(summary).length>0 ? summary : SOMCAVO_SUMMARY;
 
   // Totais por torre vindos direto da planilha
-  const torreTable=Object.entries(summary).map(([torre,s])=>{
+  const torreTable=Object.entries(usedSummary).map(([torre,s])=>{
     const pedras=filtered.filter(r=>r.torre===torre&&r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
     const totalPrev=PEDRAS_PREVISTAS[torre]?PEDRAS_PREVISTAS[torre].reduce((a,b)=>a+b,0):0;
     return{
@@ -549,8 +557,8 @@ function calcSomCavo(rows, summary={}){
     .sort((a,b)=>b.pedras-a.pedras);
 
   // Totais gerais — usa summary quando disponível
-  const totalAmbVerif=Object.values(summary).reduce((s,x)=>s+x.verif,0)||filtered.filter(r=>r.status!=="N/V").length;
-  const totalAmbReprov=Object.values(summary).reduce((s,x)=>s+x.reprov,0)||filtered.filter(r=>r.status==="R").length;
+  const totalAmbVerif=Object.values(usedSummary).reduce((s,x)=>s+x.verif,0)||filtered.filter(r=>r.status!=="N/V").length;
+  const totalAmbReprov=Object.values(usedSummary).reduce((s,x)=>s+x.reprov,0)||filtered.filter(r=>r.status==="R").length;
   const totalPedrasReprov=filtered.filter(r=>r.status==="R").reduce((a,r)=>a+(r.pedras||0),0);
   const totalPrevGeral=Object.values(PEDRAS_PREVISTAS).reduce((s,arr)=>s+arr.reduce((a,b)=>a+b,0),0);
   const pctGeralPedras=totalPrevGeral>0?parseFloat((totalPedrasReprov/totalPrevGeral*100).toFixed(2)):0;
@@ -726,6 +734,7 @@ export default function App(){
           const text=await file.text();
           const parsed=parseFile(file.name,text);
           const sc=parsed.filter(r=>r.tipo_doc==="somcavo");
+          if(parsed._summary&&Object.keys(parsed._summary).length) Object.assign(somcavo,{_summary:parsed._summary});
           const va=parsed.filter(r=>r.tipo_doc==="varanda");
           const pl=parsed.filter(r=>r.tipo_doc!=="somcavo"&&r.tipo_doc!=="varanda");
           somcavo=[...somcavo,...sc];
@@ -738,6 +747,7 @@ export default function App(){
           for(const sn of wb.SheetNames){
             const csv=XLSX.utils.sheet_to_csv(wb.Sheets[sn]);
             const parsed=parseFile(`${file.name} ${sn}`,csv);
+            if(parsed._summary&&Object.keys(parsed._summary).length) Object.assign(somcavo,{_summary:parsed._summary});
             somcavo=[...somcavo,...parsed.filter(r=>r.tipo_doc==="somcavo")];
             varanda=[...varanda,...parsed.filter(r=>r.tipo_doc==="varanda")];
             planilhas=[...planilhas,...parsed.filter(r=>r.tipo_doc!=="somcavo"&&r.tipo_doc!=="varanda")];
@@ -775,10 +785,9 @@ export default function App(){
       }catch(err){ console.error(err); errs.push(`${file.name}: erro — ${err.message}`); }
     }
     setAllRows(planilhas); setFvsRows(fvs); setVarandaRows(varanda);
-    // Extrai summary do som cavo antes de salvar
-    const scSummary=somcavo._summary||{};
-    const scRows=somcavo.filter?somcavo.filter(r=>r.tipo_doc==="somcavo"):somcavo;
-    setSomCavoRows(scRows); setSomCavoSummary(scSummary); setErrors(errs);
+    setSomCavoRows(somcavo.filter?somcavo.filter(r=>r.tipo_doc==="somcavo"):somcavo);
+    setSomCavoSummary(somcavo._summary||{});
+    setErrors(errs);
     setStatus(`${files.length} arquivo(s) processado(s). ${planilhas.length} planilha + ${fvs.length} FVS + ${varanda.length} varanda + ${somcavo.length} som cavo.`);
     if(fvs.length>0&&planilhas.length===0) setMainTab("fvs");
     else if(planilhas.length>0||varanda.length>0||somcavo.length>0) setMainTab("planilhas");
