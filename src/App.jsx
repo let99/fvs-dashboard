@@ -501,9 +501,8 @@ const PEDRAS_PREVISTAS = {
   D: [112+84,  360+270, 732+549,  276+207,44+33,   316+237, 344+258, 440+330, 420+315, 412+309],
 };
 
-function calcSomCavo(rows){
+function calcSomCavo(rows, summary={}){
   const filtered=rows.filter(r=>r.tipo_doc==="somcavo");
-  const summary=rows._summary||{};
 
   // Totais por torre vindos direto da planilha
   const torreTable=Object.entries(summary).map(([torre,s])=>{
@@ -700,6 +699,7 @@ export default function App(){
   const [fvsRows,setFvsRows]                       = useState([]);
   const [varandaRows,setVarandaRows]               = useState([]);
   const [somCavoRows,setSomCavoRows]               = useState([]);
+  const [somCavoSummary,setSomCavoSummary]         = useState({});
   const [status,setStatus]                         = useState("Envie CSV/XLSX (planilhas) ou DOCX/PDF (FVS).");
   const [fileNames,setFileNames]                   = useState([]);
   const [errors,setErrors]                         = useState([]);
@@ -714,7 +714,7 @@ export default function App(){
   const handleFile = useCallback(async e=>{
     const files=Array.from(e.target.files||[]);
     if(!files.length) return;
-    setAllRows([]); setFvsRows([]); setVarandaRows([]); setSomCavoRows([]); setErrors([]);
+    setAllRows([]); setFvsRows([]); setVarandaRows([]); setSomCavoRows([]); setSomCavoSummary({}); setErrors([]);
     setFileNames(files.map(f=>f.name));
     setStatus("Processando...");
     let planilhas=[], fvs=[], varanda=[], somcavo=[], errs=[];
@@ -774,7 +774,11 @@ export default function App(){
         } else errs.push(`${file.name}: formato não suportado.`);
       }catch(err){ console.error(err); errs.push(`${file.name}: erro — ${err.message}`); }
     }
-    setAllRows(planilhas); setFvsRows(fvs); setVarandaRows(varanda); setSomCavoRows(somcavo); setErrors(errs);
+    setAllRows(planilhas); setFvsRows(fvs); setVarandaRows(varanda);
+    // Extrai summary do som cavo antes de salvar
+    const scSummary=somcavo._summary||{};
+    const scRows=somcavo.filter?somcavo.filter(r=>r.tipo_doc==="somcavo"):somcavo;
+    setSomCavoRows(scRows); setSomCavoSummary(scSummary); setErrors(errs);
     setStatus(`${files.length} arquivo(s) processado(s). ${planilhas.length} planilha + ${fvs.length} FVS + ${varanda.length} varanda + ${somcavo.length} som cavo.`);
     if(fvs.length>0&&planilhas.length===0) setMainTab("fvs");
     else if(planilhas.length>0||varanda.length>0||somcavo.length>0) setMainTab("planilhas");
@@ -806,7 +810,7 @@ export default function App(){
 
   const somCavoTorres=useMemo(()=>["TODAS",...[...new Set(somCavoRows.map(r=>r.torre).filter(Boolean))].sort()],[somCavoRows]);
   const somCavoScoped=useMemo(()=>somCavoTorreFilter==="TODAS"?somCavoRows:somCavoRows.filter(r=>r.torre===somCavoTorreFilter),[somCavoRows,somCavoTorreFilter]);
-  const somCavoData=useMemo(()=>calcSomCavo(somCavoScoped),[somCavoScoped]);
+  const somCavoData=useMemo(()=>calcSomCavo(somCavoScoped,somCavoSummary),[somCavoScoped,somCavoSummary]);
 
   const MAIN_TABS=[{id:"planilhas",label:"📊 Planilhas"},{id:"fvs",label:"📋 FVS"}];
   const PLAN_TABS=[
@@ -963,14 +967,15 @@ export default function App(){
                         <Box title={`Por Torre — Som Cavo — ${torreLabel(somCavoTorreFilter)}`}>
                           <div style={{overflowX:"auto"}}>
                             <table style={{width:"100%",borderCollapse:"collapse"}}>
-                              <thead><tr><TH c="Torre"/><TH c="Pedras reprov."/><TH c="Pedras previstas"/><TH c="% pedras c/ som cavo"/><TH c="Amb. reprov."/><TH c="N/V"/></tr></thead>
+                              <thead><tr><TH c="Torre"/><TH c="Pedras reprov."/><TH c="Pedras previstas"/><TH c="% pedras"/><TH c="Amb. verif."/><TH c="Amb. reprov."/><TH c="N/V"/></tr></thead>
                               <tbody>{somCavoData.torreTable.map((t,i)=>(
                                 <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
                                   <TD c={`Torre ${t.torre}`} color={C.accent} bold/>
                                   <TD c={t.pedras} color={t.pedras>0?C.bad:C.ok} bold/>
                                   <TD c={t.totalPrev} color={C.muted}/>
                                   <TD c={`${t.pctPedras}%`} bold color={t.pctPedras>=5?C.bad:t.pctPedras>=2?C.orange:C.ok}/>
-                                  <TD c={t.ambReprov} color={t.ambReprov>0?C.orange:C.ok}/>
+                                  <TD c={t.verif} color={C.muted}/>
+                                  <TD c={t.reprov} color={t.reprov>0?C.orange:C.ok}/>
                                   <TD c={t.nv} color={C.muted}/>
                                 </tr>))}
                               </tbody>
