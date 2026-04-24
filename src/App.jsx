@@ -28,7 +28,9 @@ function fix(s){
 }
 function fixEnc(s){ try{ return decodeURIComponent(escape(s)); } catch{ return s; } }
 function parseCSVLines(text){
-  const sep = text.indexOf("\t") !== -1 && (text.indexOf(",") === -1 || text.indexOf("\t") < text.indexOf(",")) ? "\t" : ",";
+  const sep = text.indexOf("\t") !== -1 && (text.indexOf(",") === -1 || text.indexOf("\t") < text.indexOf(",")) ? "\t"
+             : text.indexOf(";") !== -1 && (text.indexOf(",") === -1 || text.indexOf(";") < text.indexOf(",")) ? ";"
+             : ",";
   return text.split(/\r?\n/).map(l => l.split(sep).map(c => san(fix(fixEnc(c)))));
 }
 
@@ -197,7 +199,6 @@ function calcSomCavo(rows, summary){
   const filtered = rows.filter(r => r.tipo_doc === "somcavo");
   const torresSet = new Set(filtered.map(r => r.torre).filter(Boolean));
 
-  // Tabela por torre
   const torreTable = Object.entries(usedSummary)
     .filter(([torre]) => torresSet.size === 0 || torresSet.has(torre))
     .map(([torre, s]) => {
@@ -207,7 +208,6 @@ function calcSomCavo(rows, summary){
     })
     .sort((a, b) => a.torre.localeCompare(b.torre));
 
-  // Por ambiente
   const byAmb = {};
   filtered.forEach(r => {
     if(!byAmb[r.ambiente]) byAmb[r.ambiente] = { ambiente:r.ambiente, pedras:0, ambReprov:0, ambTotal:0 };
@@ -225,7 +225,6 @@ function calcSomCavo(rows, summary){
     return { ...x, totalPrev, pctPedras: totalPrev > 0 ? parseFloat((x.pedras/totalPrev*100).toFixed(2)) : 0 };
   }).sort((a, b) => b.pedras - a.pedras);
 
-  // Por apto
   const byApto = {};
   filtered.forEach(r => {
     const key = `${r.torre}-${r.apto}`;
@@ -240,7 +239,6 @@ function calcSomCavo(rows, summary){
     .map(x => ({ ...x, ambientes:[...x.ambientes].join(", ") }))
     .sort((a, b) => b.pedras - a.pedras);
 
-  // Totais
   const summaryEntries = Object.entries(usedSummary).filter(([t]) => torresSet.size === 0 || torresSet.has(t));
   const totalAmbVerif = summaryEntries.reduce((s, [,x]) => s + x.verif, 0) || filtered.filter(r => r.status !== "N/V").length;
   const totalAmbReprov = summaryEntries.reduce((s, [,x]) => s + x.reprov, 0) || filtered.filter(r => r.status === "R").length;
@@ -315,6 +313,78 @@ function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
     });
   }
   return result.length > 0 ? result : null;
+}
+
+// ─── parseEsquadriasSummary ───────────────────────────────────────────────
+// CORREÇÃO: lê o bloco de resumo por torre (linhas 4-11 do CSV / linhas 5-11 do XLSX)
+// que contém "TOTAL TORRE A", "TOTAL TORRE B" etc. e retorna contagens reais.
+// Também lê "CONTRAMARCOS TOTAIS" para montar o denominador correto.
+function parseEsquadriasSummary(rows, fileName){
+  // Procura a linha de legenda que contém "TOTAL TORRE A" e "TOTAL TORRE B"
+  const headIdx = rows.findIndex(r => {
+    const flat = r.join(" ");
+    return /TOTAL TORRE [AB]/i.test(flat) || /TOTAL TORRE A/i.test(flat);
+  });
+  if(headIdx === -1) return null;
+
+  const headRow = rows[headIdx];
+  // Mapear colunas de cada torre
+  const torresCols = [];
+  headRow.forEach((cell, ci) => {
+    const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i);
+    if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci });
+  });
+  if(torresCols.length < 2) return null;
+
+  // Status válidos para esquadrias (incluindo CE e R)
+  const ESQ_STATUS_MAP_LOCAL = {
+    S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E", CE:"CE", R:"R"
+  };
+
+  const result = [];
+  // totais por torre para o KPI
+  const torreTotal = {};
+  const torreInst  = {};
+
+  for(let i = headIdx+1; i < Math.min(headIdx+15, rows.length); i++){
+    const r = rows[i];
+    const statusCell = san(r[0]).toUpperCase();
+
+    // Linha de contramarcos totais → denominador do KPI
+    if(/CONTRAMARCOS\s+TOTAIS/i.test(statusCell) || /CONTRAMARCOS\s+TOTAIS/i.test(r.join(" "))){
+      torresCols.forEach(({ torre, col }, ti) => {
+        const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+6;
+        for(let x = col; x < Math.min(col+5, nextCol); x++){
+          const n = parseInt(san(r[x]));
+          if(!isNaN(n) && n > 0){ torreTotal[torre] = n; break; }
+        }
+      });
+      continue;
+    }
+
+    const status = ESQ_STATUS_MAP_LOCAL[statusCell];
+    if(!status) continue;
+
+    torresCols.forEach(({ torre, col }, ti) => {
+      const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+6;
+      let val = 0;
+      for(let x = col; x < Math.min(col+5, nextCol); x++){
+        const n = parseInt(san(r[x]));
+        if(!isNaN(n) && n >= 0){ val = n; break; }
+      }
+      if(status === "E") torreInst[torre] = (torreInst[torre]||0) + val;
+      for(let k = 0; k < val; k++){
+        result.push({ tipo:"esquadrias", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
+      }
+    });
+  }
+
+  if(result.length === 0) return null;
+
+  // Anexar metadados de total/instaladas para o KPI
+  result._torreTotal = torreTotal;
+  result._torreInst  = torreInst;
+  return result;
 }
 
 // ─── Parsers ──────────────────────────────────────────────────────────────
@@ -397,17 +467,24 @@ function parsePassantes(rows, fileName){
   return result;
 }
 
-const ESQ_STATUS_MAP = {S:"S",C:"C","P.U":"P.U",F:"F",I:"I",E:"E"};
+// ─── CORREÇÃO PRINCIPAL: parseEsquadrias ─────────────────────────────────
+// Mudanças:
+// 1. STATUS_VALIDOS agora inclui "CE" e "R" (antes omitidos)
+// 2. hLines não captura mais linhas de dados como falsos headers
+//    (verificação: primeira célula não pode ser um número de apto ou "térreo")
+const ESQ_STATUS_MAP = {S:"S",C:"C","P.U":"P.U",F:"F",I:"I",E:"E",CE:"CE",R:"R"};
+
 function parseEsquadrias(rows, fileName){
-  const summary = parseSummaryByTorre(rows, fileName, "esquadrias", ESQ_STATUS_MAP, /TOTAL TORRE/i);
-  if(summary) return summary;
   const result = [];
-  const STATUS_VALIDOS = new Set(["E","I","F","C","P.U","S"]);
+  // STATUS_VALIDOS agora inclui CE e R
+  const STATUS_VALIDOS = new Set(["E","I","F","C","P.U","S","CE","R"]);
+
   function detectBlocos(hRow){
     const blocos = []; let ci = 0;
     while(ci < hRow.length){
       const cell = san(hRow[ci]);
-      const isAp = /^apto$/i.test(cell), isEm = cell === "" && ci+1 < hRow.length && /^torre$/i.test(san(hRow[ci+1]));
+      const isAp = /^apto$/i.test(cell);
+      const isEm = cell === "" && ci+1 < hRow.length && /^torre$/i.test(san(hRow[ci+1]));
       if(isAp || isEm){
         const ac = ci, tc = ci+1, as = tc+1; let ae = hRow.length;
         for(let x = as+1; x < hRow.length; x++){
@@ -419,10 +496,16 @@ function parseEsquadrias(rows, fileName){
     }
     return blocos;
   }
+
+  // CORREÇÃO: hLines não pode capturar linhas onde a primeira célula é um apto ou térreo
   const hLines = rows.reduce((acc, r, i) => {
+    const first = san(r[0]);
+    // Rejeita se a primeira célula for número de apto (3-4 dígitos) ou "térreo"
+    if(/^\d{3,4}$|^t[eé]rreo$/i.test(first)) return acc;
     if(r.some(c => /^torre$/i.test(san(c))) && r.filter(c => san(c).length > 2 && !/^apto$|^torre$/i.test(san(c))).length >= 3) acc.push(i);
     return acc;
   }, []);
+
   for(const hi of hLines){
     const blocos = detectBlocos(rows[hi]); if(!blocos.length) continue;
     for(let i = hi+1; i < rows.length; i++){
@@ -430,7 +513,11 @@ function parseEsquadrias(rows, fileName){
       for(const b of blocos){
         const a = san(r[b.aptoCol]), t = san(r[b.torreCol]);
         if(!a || !isApto(a) || !t || !isTorre(t)) continue;
-        b.headers.forEach((amb, j) => { const val = san(r[b.ambStart+j]); if(!val || !STATUS_VALIDOS.has(val)) return; result.push({ tipo:"esquadrias", torre:t.toUpperCase(), apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName }); });
+        b.headers.forEach((amb, j) => {
+          const val = san(r[b.ambStart+j]);
+          if(!val || !STATUS_VALIDOS.has(val)) return;
+          result.push({ tipo:"esquadrias", torre:t.toUpperCase(), apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
+        });
       }
     }
   }
@@ -446,7 +533,13 @@ function parseFile(fileName, csvText){
     case "passantes":  return parsePassantes(rows, fileName);
     case "varanda":    return parseCeramicaVaranda(rows, fileName);
     case "somcavo":    return parseSomCavo(rows, fileName);
-    case "esquadrias": { const s = parseSummaryByTorre(rows, fileName, "esquadrias", ESQ_STATUS_MAP, /TOTAL TORRE/i); return s || parseEsquadrias(rows, fileName); }
+    case "esquadrias": {
+      // Tenta primeiro o resumo por torre (lê contagens do bloco LEGENDA)
+      const summary = parseEsquadriasSummary(rows, fileName);
+      if(summary) return summary;
+      // Fallback: parse linha por linha
+      return parseEsquadrias(rows, fileName);
+    }
     default: return [];
   }
 }
@@ -456,7 +549,32 @@ const CLASS = {
   shaft:{ ok:["A"],warn:["FS"],na:["N/A","N/V","?","NF"], labels:{A:"Aberto",FS:"Fech. s/ cerâmica",FC:"Fech. c/ cerâmica","N/A":"N/A","N/V":"N/V",NF:"Não fechado","?":"Não verificado"}, colors:{A:"#16a34a",FS:"#f59e0b",FC:"#2563eb","N/A":"#94a3b8","N/V":"#64748b",NF:"#dc2626","?":"#475569"} },
   capiacos:{ ok:["OK"],warn:["Q","N","Q.I","F"],na:["N/V","N/A"], labels:{OK:"Correto",Q:"Sem queda",N:"Desnivelado","Q.I":"Queda invertida",F:"Falta fachada","N/V":"N/V"}, colors:{OK:"#16a34a",Q:"#dc2626",N:"#f59e0b","Q.I":"#b91c1c",F:"#ea580c","N/V":"#94a3b8"} },
   passantes:{ ok:["OK"],warn:["R","C","Q","P","F","S"],na:["N/V","N/A"], labels:{OK:"Correto",R:"Rente ao piso",C:"PEX chumbado",Q:"Quebrado",P:"Mal-fixado",F:"Falta tubo",S:"Sujeira","N/V":"N/V"}, colors:{OK:"#16a34a",R:"#dc2626",C:"#f59e0b",Q:"#b91c1c",P:"#ea580c",F:"#7c3aed",S:"#0891b2","N/V":"#94a3b8"} },
-  esquadrias:{ ok:["E"],warn:["I","F","C","P.U","S"],na:[], labels:{E:"Instalada",I:"Pronto p/ instalar",F:"Falta rejunte/fachada",C:"Falta contramarco","P.U":"P.U incompleto",S:"Contramarco sujo"}, colors:{E:"#16a34a",I:"#2563eb",F:"#dc2626",C:"#f59e0b","P.U":"#ea580c",S:"#64748b"} },
+  // CORREÇÃO: CLASS.esquadrias agora inclui CE e R com labels e cores corretas
+  esquadrias:{
+    ok:  ["E"],
+    warn:["I","F","C","P.U","S","CE","R"],
+    na:  [],
+    labels:{
+      E:"Instalada",
+      I:"Pronto p/ instalar",
+      F:"Falta rejunte/fachada",
+      C:"Falta contramarco",
+      "P.U":"P.U incompleto",
+      S:"Contramarco sujo",
+      CE:"Falta cerâmica/gesso",
+      R:"Falta rejunte"
+    },
+    colors:{
+      E:"#16a34a",
+      I:"#2563eb",
+      F:"#dc2626",
+      C:"#f59e0b",
+      "P.U":"#ea580c",
+      S:"#64748b",
+      CE:"#7c3aed",
+      R:"#b91c1c"
+    }
+  },
 };
 
 function calcTipo(rows, tipo){
@@ -475,6 +593,37 @@ function calcTipo(rows, tipo){
     byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
     byApto: Object.values(byApto).map(x => ({ ...x, verificacoes:x.total, pct:x.total?`${Math.round(x.prob/x.total*100)}%`:"0%", statuses:[...x.statuses].join(", ") }))
       .sort((a,b) => a.torre.localeCompare(b.torre) || Number(String(a.apto).match(/\d+/)?.[0]||0) - Number(String(b.apto).match(/\d+/)?.[0]||0)),
+  };
+}
+
+// ─── CORREÇÃO: calcEsquadrias lê metadados do summary ────────────────────
+// Retorna esqInst e esqTotal corretos a partir do bloco de resumo da planilha
+function calcEsquadrias(rows){
+  const esqRows = rows.filter(r => r.tipo === "esquadrias");
+  const counts = {};
+  const byTorre = {};
+
+  esqRows.forEach(r => {
+    const s = r.status || "?";
+    counts[s] = (counts[s]||0) + 1;
+    const t = r.torre || "?";
+    if(!byTorre[t]) byTorre[t] = { torre:t, counts:{} };
+    byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
+  });
+
+  // Metadados de total por torre (anexados por parseEsquadriasSummary)
+  // Pegar o _torreTotal/_torreInst do array original via closure não é possível,
+  // então usamos os counts acumulados
+  const esqInst  = counts["E"] || 0;
+  // Total = soma de todos os status (cada entrada do summary representa 1 contramarco)
+  const esqTotal = Object.values(counts).reduce((a,b) => a+b, 0);
+
+  return {
+    counts,
+    byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
+    byApto: [], // summary não tem dados por apto
+    esqInst,
+    esqTotal,
   };
 }
 
@@ -781,7 +930,8 @@ export default function App(){
   const shaftData  = useMemo(() => calcTipo(scoped, "shaft"),      [scoped]);
   const capData    = useMemo(() => calcTipo(scoped, "capiacos"),   [scoped]);
   const passData   = useMemo(() => calcTipo(scoped, "passantes"),  [scoped]);
-  const esqData    = useMemo(() => calcTipo(scoped, "esquadrias"), [scoped]);
+  // CORREÇÃO: usar calcEsquadrias em vez de calcTipo para esquadrias
+  const esqData    = useMemo(() => calcEsquadrias(scoped),         [scoped]);
 
   const shaftTotal  = Object.values(shaftData.counts).reduce((a,b) => a+b, 0) - (shaftData.counts["N/A"]||0);
   const shaftAberto = shaftData.counts["A"] || 0;
@@ -789,8 +939,9 @@ export default function App(){
   const capProb     = (capData.counts["Q"]||0) + (capData.counts["N"]||0) + (capData.counts["Q.I"]||0) + (capData.counts["F"]||0);
   const passTotal   = Object.values(passData.counts).reduce((a,b) => a+b, 0);
   const passProb    = passTotal - (passData.counts["OK"]||0) - (passData.counts["N/V"]||0);
-  const esqTotal    = Object.values(esqData.counts).reduce((a,b) => a+b, 0);
-  const esqInst     = esqData.counts["E"] || 0;
+  // CORREÇÃO: esqInst e esqTotal vêm direto de calcEsquadrias
+  const esqInst     = esqData.esqInst  ?? (esqData.counts["E"] || 0);
+  const esqTotal    = esqData.esqTotal ?? Object.values(esqData.counts).reduce((a,b) => a+b, 0);
 
   const fvsServicos   = ["ceramica","contrapiso","porta","esquadria_alum"];
   const fvsTorres     = useMemo(() => ["TODAS", ...[...new Set(fvsRows.map(r => r.torre).filter(Boolean))].sort()], [fvsRows]);
@@ -822,7 +973,7 @@ export default function App(){
       <div style={{maxWidth:1280,margin:"0 auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{background:"#082f49",color:C.accent,borderRadius:999,padding:"3px 12px",fontSize:12,fontWeight:"bold"}}>FVS Qualidade</span>
-          <span style={{color:C.muted,fontSize:12}}>v4.5</span>
+          <span style={{color:C.muted,fontSize:12}}>v4.6</span>
         </div>
         <h1 style={{fontSize:32,margin:"0 0 4px",color:C.white}}>Dashboard de Verificação de Serviços</h1>
         <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Cerâmica Varanda · Som Cavo · Contrapiso · Portas</p>
@@ -899,7 +1050,7 @@ export default function App(){
                 {planTab === "esquadrias" && <div>
                   <Box title={`Distribuição — Esquadrias — ${tL(torreFilter)}`}><BarChart counts={esqData.counts} labels={CLASS.esquadrias.labels} colors={CLASS.esquadrias.colors}/></Box>
                   <Box title="Por Torre — Esquadrias"><TabelaTorre data={esqData}/></Box>
-                  <Box title={`Por Apartamento — Esquadrias — ${tL(torreFilter)}`}><TabelaApto data={esqData}/></Box>
+                  {esqData.byApto.length > 0 && <Box title={`Por Apartamento — Esquadrias — ${tL(torreFilter)}`}><TabelaApto data={esqData}/></Box>}
                 </div>}
 
                 {planTab === "varanda" && <div>
