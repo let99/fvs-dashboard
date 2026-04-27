@@ -1144,25 +1144,18 @@ export default function App(){
                       <KPI label="% pedras c/ som cavo" value={`${somCavoData.pctGeralPedras}%`} sub="pedras reprov / previstas" color={somCavoData.pctGeralPedras>=5?C.bad:somCavoData.pctGeralPedras>=2?C.orange:C.warn}/>
                       <div style={{background:C.card,borderRadius:14,padding:"18px 22px",borderLeft:`4px solid ${C.orange}`}}>
                         <div style={{fontSize:10,textTransform:"uppercase",color:C.muted,fontWeight:"bold",marginBottom:6}}>Ambientes reprovados</div>
-                        {somCavoTorreFilter === "TODAS" ? (
-                          <>
-                            <div style={{fontSize:30,fontWeight:"bold",color:C.white,marginBottom:6}}>{somCavoData.totalAmbReprov} <span style={{fontSize:13,color:C.muted,fontWeight:"normal"}}>de {somCavoData.totalAmbVerif} verificados</span></div>
-                            <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                              {somCavoData.torreTable.map(t => (
-                                <div key={t.torre} style={{display:"flex",alignItems:"center",gap:8}}>
-                                  <div style={{width:52,fontSize:11,color:C.muted,flexShrink:0}}>Torre {t.torre}</div>
-                                  <div style={{fontSize:12,color:C.white}}>
-                                    <span style={{color:t.reprov>0?C.orange:C.ok,fontWeight:"bold"}}>{t.reprov}</span>
-                                    <span style={{color:C.muted}}> / {t.verif}</span>
-                                  </div>
+                        <div style={{fontSize:30,fontWeight:"bold",color:C.white,marginBottom:6}}>{somCavoData.totalAmbReprov} <span style={{fontSize:13,color:C.muted,fontWeight:"normal"}}>de {somCavoData.totalAmbVerif} verificados</span></div>
+                        {somCavoTorreFilter === "TODAS" && (
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {somCavoData.torreTable.map(t => (
+                              <div key={t.torre} style={{display:"flex",alignItems:"center",gap:8}}>
+                                <div style={{width:52,fontSize:11,color:C.muted,flexShrink:0}}>Torre {t.torre}</div>
+                                <div style={{fontSize:12,color:C.white}}>
+                                  <span style={{color:t.reprov>0?C.orange:C.ok,fontWeight:"bold"}}>{t.reprov}</span>
+                                  <span style={{color:C.muted}}> / {t.verif}</span>
                                 </div>
-                              ))}
-                            </div>
-                          </>
-                        ) : (
-                          <div style={{fontSize:30,fontWeight:"bold",color:C.white}}>
-                            <span style={{color:somCavoData.totalAmbReprov>0?C.orange:C.ok}}>{somCavoData.totalAmbReprov}</span>
-                            <span style={{fontSize:13,color:C.muted,fontWeight:"normal"}}> de {somCavoData.totalAmbVerif} verificados</span>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
