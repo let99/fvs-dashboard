@@ -142,15 +142,58 @@ const PEDRAS_PREVISTAS = {
   D: [112+84,  360+270, 732+549,  276+207,44+33,   316+237, 344+258, 440+330, 420+315, 412+309],
 };
 
-const SOMCAVO_SUMMARY_DEFAULT = {
-  A: { verif:93,  reprov:21, total:220, nv:7,  pctPedras:0.84 },
-  B: { verif:48,  reprov:6,  total:220, nv:2,  pctPedras:0.70 },
-  C: { verif:40,  reprov:15, total:220, nv:10, pctPedras:1.94 },
-  D: { verif:56,  reprov:26, total:220, nv:4,  pctPedras:1.67 },
-};
-
+// ─── CORREÇÃO BUG 1: parseSomCavo agora também extrai o bloco de totais
+// por torre (linhas "AMBIENTES VERIFICADOS", "AMBIENTES REPROVADOS", "N/V") do CSV
+// e retorna { rows, summary } em vez de só rows
 function parseSomCavo(rows, fileName){
   const result = [];
+
+  // Tenta extrair summary do bloco de legenda no topo do arquivo
+  // Formato esperado: linhas com LEGENDA | TOTAL TORRE A | TOTAL TORRE B | ...
+  const summaryOut = {};
+  const legendHeadIdx = rows.findIndex(r => {
+    const flat = r.join(" ");
+    return /TOTAL TORRE [AB]/i.test(flat);
+  });
+  if(legendHeadIdx !== -1){
+    const headRow = rows[legendHeadIdx];
+    const torresCols = [];
+    headRow.forEach((cell, ci) => {
+      const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i);
+      if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci });
+    });
+    // Lê linhas de totais logo abaixo do cabeçalho
+    const SUMMARY_MAP = {
+      "NÃO VERIFICADO": "nv",
+      "N/V": "nv",
+      "AMBIENTES VERIFICADOS": "verif",
+      "AMBIENTES TOTAIS": "total",
+      "AMBIENTES REPROVADOS": "reprov",
+    };
+    for(let i = legendHeadIdx + 1; i < Math.min(legendHeadIdx + 10, rows.length); i++){
+      const r = rows[i];
+      const label = san(fix(r[0] || r[1] || "")).toUpperCase().trim();
+      // Tenta fazer match com qualquer chave conhecida
+      let key = null;
+      for(const [pattern, k] of Object.entries(SUMMARY_MAP)){
+        if(label.includes(pattern)) { key = k; break; }
+      }
+      if(!key) continue;
+      torresCols.forEach(({ torre, col }) => {
+        // Busca o primeiro número válido na janela dessa torre
+        for(let x = col; x < col + 4 && x < r.length; x++){
+          const n = parseInt(san(r[x]));
+          if(!isNaN(n) && n >= 0){
+            if(!summaryOut[torre]) summaryOut[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 };
+            summaryOut[torre][key] = n;
+            break;
+          }
+        }
+      });
+    }
+  }
+
+  // Parser de linhas de dados (apto/torre/valores)
   const headerIdxs = rows.reduce((acc, r, i) => {
     if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i);
     return acc;
@@ -179,7 +222,8 @@ function parseSomCavo(rows, fileName){
         if(!/^[A-D]$/.test(torre)) continue;
         SOMCAVO_AMBIENTES.forEach((amb, j) => {
           const raw = san(r[b.ambStart + j]);
-          if(!raw) return;
+          // CORREÇÃO BUG 3: célula vazia = não lida (skip); "0" = verificado sem pedras reprovadas (status A)
+          if(raw === "" || raw === undefined) return;
           if(/n\/v/i.test(raw)){
             result.push({ tipo_doc:"somcavo", torre, apto, pav:pav(apto), ambiente:amb, pedras:null, status:"N/V", fonte:fileName });
           } else {
@@ -191,20 +235,52 @@ function parseSomCavo(rows, fileName){
       }
     }
   });
+
+  // Retorna rows com summary embutido para consumo no handleFile
+  result._summary = Object.keys(summaryOut).length > 0 ? summaryOut : null;
   return result;
 }
 
+// ─── CORREÇÃO BUG 2: calcSomCavo recalcula % a partir dos dados reais ────
+// pctGeralPedras = totalPedrasReprov / totalPedrasPrevistas (não média de %)
+// totalAmbVerif e totalAmbReprov lidos do summary extraído do CSV (não hardcoded)
 function calcSomCavo(rows, summary){
-  const usedSummary = (summary && Object.keys(summary).length > 0) ? summary : SOMCAVO_SUMMARY_DEFAULT;
   const filtered = rows.filter(r => r.tipo_doc === "somcavo");
   const torresSet = new Set(filtered.map(r => r.torre).filter(Boolean));
 
-  const torreTable = Object.entries(usedSummary)
-    .filter(([torre]) => torresSet.size === 0 || torresSet.has(torre))
-    .map(([torre, s]) => {
-      const pedras = filtered.filter(r => r.torre === torre && r.status === "R").reduce((a, r) => a + (r.pedras||0), 0);
+  // Reconta ambientes verificados e reprovados diretamente dos dados linha a linha
+  // Isso garante que células "0" (verificadas sem reprovação) sejam contadas corretamente
+  const ambContByTorre = {};
+  filtered.forEach(r => {
+    const t = r.torre;
+    if(!ambContByTorre[t]) ambContByTorre[t] = { verif:0, reprov:0, nv:0 };
+    if(r.status === "N/V") ambContByTorre[t].nv++;
+    else { ambContByTorre[t].verif++; if(r.status === "R") ambContByTorre[t].reprov++; }
+  });
+
+  // Mescla com summary extraído (para total de ambientes por torre = 220)
+  const mergedSummary = {};
+  const allTorres = new Set([...Object.keys(summary || {}), ...Object.keys(ambContByTorre)]);
+  allTorres.forEach(t => {
+    const fromCSV  = (summary || {})[t] || {};
+    const fromRows = ambContByTorre[t] || {};
+    mergedSummary[t] = {
+      verif:  fromCSV.verif  ?? fromRows.verif  ?? 0,
+      reprov: fromCSV.reprov ?? fromRows.reprov ?? 0,
+      total:  fromCSV.total  ?? 220,
+      nv:     fromCSV.nv     ?? fromRows.nv     ?? 0,
+    };
+  });
+
+  const torreTable = [...(torresSet.size > 0 ? torresSet : new Set(Object.keys(PEDRAS_PREVISTAS)))]
+    .filter(t => !torresSet.size || torresSet.has(t))
+    .map(torre => {
+      const pedras   = filtered.filter(r => r.torre === torre && r.status === "R").reduce((a, r) => a + (r.pedras||0), 0);
       const totalPrev = (PEDRAS_PREVISTAS[torre] || []).reduce((a, b) => a + b, 0);
-      return { torre, pedras, verif:s.verif, reprov:s.reprov, total:s.total, nv:s.nv, totalPrev, pctPedras:s.pctPedras };
+      const s = mergedSummary[torre] || { verif:0, reprov:0, total:220, nv:0 };
+      // pct por torre = pedras reprovadas / pedras previstas (não hardcoded)
+      const pctPedras = totalPrev > 0 ? parseFloat((pedras / totalPrev * 100).toFixed(2)) : 0;
+      return { torre, pedras, verif:s.verif, reprov:s.reprov, total:s.total, nv:s.nv, totalPrev, pctPedras };
     })
     .sort((a, b) => a.torre.localeCompare(b.torre));
 
@@ -239,15 +315,18 @@ function calcSomCavo(rows, summary){
     .map(x => ({ ...x, ambientes:[...x.ambientes].join(", ") }))
     .sort((a, b) => b.pedras - a.pedras);
 
-  const summaryEntries = Object.entries(usedSummary).filter(([t]) => torresSet.size === 0 || torresSet.has(t));
-  const totalAmbVerif = summaryEntries.reduce((s, [,x]) => s + x.verif, 0) || filtered.filter(r => r.status !== "N/V").length;
-  const totalAmbReprov = summaryEntries.reduce((s, [,x]) => s + x.reprov, 0) || filtered.filter(r => r.status === "R").length;
+  // CORREÇÃO BUG 2: totais reais do CSV (não hardcoded)
+  const totalAmbVerif  = Object.values(mergedSummary).reduce((s, x) => s + x.verif,  0)
+                      || filtered.filter(r => r.status !== "N/V").length;
+  const totalAmbReprov = Object.values(mergedSummary).reduce((s, x) => s + x.reprov, 0)
+                      || filtered.filter(r => r.status === "R").length;
   const totalPedrasReprov = filtered.filter(r => r.status === "R").reduce((a, r) => a + (r.pedras||0), 0);
-  const pctGeralPedras = summaryEntries.length === 1
-    ? summaryEntries[0][1].pctPedras
-    : summaryEntries.length > 1
-      ? parseFloat((summaryEntries.reduce((s,[,x]) => s + x.pctPedras, 0) / summaryEntries.length).toFixed(2))
-      : 0;
+
+  // CORREÇÃO BUG 2: % geral = pedras reprovadas / total de pedras previstas (não média de %)
+  const grandTotalPrev = torreTable.reduce((s, t) => s + t.totalPrev, 0);
+  const pctGeralPedras = grandTotalPrev > 0
+    ? parseFloat((totalPedrasReprov / grandTotalPrev * 100).toFixed(2))
+    : 0;
 
   return { paretoAmb, torreTable, aptoTable, totalPedrasReprov, totalAmbReprov, totalAmbVerif, pctGeralPedras };
 }
@@ -316,11 +395,7 @@ function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
 }
 
 // ─── parseEsquadriasSummary ───────────────────────────────────────────────
-// CORREÇÃO: lê o bloco de resumo por torre (linhas 4-11 do CSV / linhas 5-11 do XLSX)
-// que contém "TOTAL TORRE A", "TOTAL TORRE B" etc. e retorna contagens reais.
-// Também lê "CONTRAMARCOS TOTAIS" para montar o denominador correto.
 function parseEsquadriasSummary(rows, fileName){
-  // Procura a linha de legenda que contém "TOTAL TORRE A" e "TOTAL TORRE B"
   const headIdx = rows.findIndex(r => {
     const flat = r.join(" ");
     return /TOTAL TORRE [AB]/i.test(flat) || /TOTAL TORRE A/i.test(flat);
@@ -328,7 +403,6 @@ function parseEsquadriasSummary(rows, fileName){
   if(headIdx === -1) return null;
 
   const headRow = rows[headIdx];
-  // Mapear colunas de cada torre
   const torresCols = [];
   headRow.forEach((cell, ci) => {
     const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i);
@@ -336,13 +410,11 @@ function parseEsquadriasSummary(rows, fileName){
   });
   if(torresCols.length < 2) return null;
 
-  // Status válidos para esquadrias (incluindo CE e R)
   const ESQ_STATUS_MAP_LOCAL = {
     S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E", CE:"CE", R:"R"
   };
 
   const result = [];
-  // totais por torre para o KPI
   const torreTotal = {};
   const torreInst  = {};
 
@@ -350,7 +422,6 @@ function parseEsquadriasSummary(rows, fileName){
     const r = rows[i];
     const statusCell = san(r[0]).toUpperCase();
 
-    // Linha de contramarcos totais → denominador do KPI
     if(/CONTRAMARCOS\s+TOTAIS/i.test(statusCell) || /CONTRAMARCOS\s+TOTAIS/i.test(r.join(" "))){
       torresCols.forEach(({ torre, col }, ti) => {
         const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+6;
@@ -381,7 +452,6 @@ function parseEsquadriasSummary(rows, fileName){
 
   if(result.length === 0) return null;
 
-  // Anexar metadados de total/instaladas para o KPI
   result._torreTotal = torreTotal;
   result._torreInst  = torreInst;
   return result;
@@ -467,16 +537,10 @@ function parsePassantes(rows, fileName){
   return result;
 }
 
-// ─── CORREÇÃO PRINCIPAL: parseEsquadrias ─────────────────────────────────
-// Mudanças:
-// 1. STATUS_VALIDOS agora inclui "CE" e "R" (antes omitidos)
-// 2. hLines não captura mais linhas de dados como falsos headers
-//    (verificação: primeira célula não pode ser um número de apto ou "térreo")
 const ESQ_STATUS_MAP = {S:"S",C:"C","P.U":"P.U",F:"F",I:"I",E:"E",CE:"CE",R:"R"};
 
 function parseEsquadrias(rows, fileName){
   const result = [];
-  // STATUS_VALIDOS agora inclui CE e R
   const STATUS_VALIDOS = new Set(["E","I","F","C","P.U","S","CE","R"]);
 
   function detectBlocos(hRow){
@@ -497,10 +561,8 @@ function parseEsquadrias(rows, fileName){
     return blocos;
   }
 
-  // CORREÇÃO: hLines não pode capturar linhas onde a primeira célula é um apto ou térreo
   const hLines = rows.reduce((acc, r, i) => {
     const first = san(r[0]);
-    // Rejeita se a primeira célula for número de apto (3-4 dígitos) ou "térreo"
     if(/^\d{3,4}$|^t[eé]rreo$/i.test(first)) return acc;
     if(r.some(c => /^torre$/i.test(san(c))) && r.filter(c => san(c).length > 2 && !/^apto$|^torre$/i.test(san(c))).length >= 3) acc.push(i);
     return acc;
@@ -534,10 +596,8 @@ function parseFile(fileName, csvText){
     case "varanda":    return parseCeramicaVaranda(rows, fileName);
     case "somcavo":    return parseSomCavo(rows, fileName);
     case "esquadrias": {
-      // Tenta primeiro o resumo por torre (lê contagens do bloco LEGENDA)
       const summary = parseEsquadriasSummary(rows, fileName);
       if(summary) return summary;
-      // Fallback: parse linha por linha
       return parseEsquadrias(rows, fileName);
     }
     default: return [];
@@ -549,7 +609,6 @@ const CLASS = {
   shaft:{ ok:["A"],warn:["FS"],na:["N/A","N/V","?","NF"], labels:{A:"Aberto",FS:"Fech. s/ cerâmica",FC:"Fech. c/ cerâmica","N/A":"N/A","N/V":"N/V",NF:"Não fechado","?":"Não verificado"}, colors:{A:"#16a34a",FS:"#f59e0b",FC:"#2563eb","N/A":"#94a3b8","N/V":"#64748b",NF:"#dc2626","?":"#475569"} },
   capiacos:{ ok:["OK"],warn:["Q","N","Q.I","F"],na:["N/V","N/A"], labels:{OK:"Correto",Q:"Sem queda",N:"Desnivelado","Q.I":"Queda invertida",F:"Falta fachada","N/V":"N/V"}, colors:{OK:"#16a34a",Q:"#dc2626",N:"#f59e0b","Q.I":"#b91c1c",F:"#ea580c","N/V":"#94a3b8"} },
   passantes:{ ok:["OK"],warn:["R","C","Q","P","F","S"],na:["N/V","N/A"], labels:{OK:"Correto",R:"Rente ao piso",C:"PEX chumbado",Q:"Quebrado",P:"Mal-fixado",F:"Falta tubo",S:"Sujeira","N/V":"N/V"}, colors:{OK:"#16a34a",R:"#dc2626",C:"#f59e0b",Q:"#b91c1c",P:"#ea580c",F:"#7c3aed",S:"#0891b2","N/V":"#94a3b8"} },
-  // CORREÇÃO: CLASS.esquadrias agora inclui CE e R com labels e cores corretas
   esquadrias:{
     ok:  ["E"],
     warn:["I","F","C","P.U","S","CE","R"],
@@ -596,8 +655,6 @@ function calcTipo(rows, tipo){
   };
 }
 
-// ─── CORREÇÃO: calcEsquadrias lê metadados do summary ────────────────────
-// Retorna esqInst e esqTotal corretos a partir do bloco de resumo da planilha
 function calcEsquadrias(rows){
   const esqRows = rows.filter(r => r.tipo === "esquadrias");
   const counts = {};
@@ -611,17 +668,13 @@ function calcEsquadrias(rows){
     byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
   });
 
-  // Metadados de total por torre (anexados por parseEsquadriasSummary)
-  // Pegar o _torreTotal/_torreInst do array original via closure não é possível,
-  // então usamos os counts acumulados
   const esqInst  = counts["E"] || 0;
-  // Total = soma de todos os status (cada entrada do summary representa 1 contramarco)
   const esqTotal = Object.values(counts).reduce((a,b) => a+b, 0);
 
   return {
     counts,
     byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
-    byApto: [], // summary não tem dados por apto
+    byApto: [],
     esqInst,
     esqTotal,
   };
@@ -872,6 +925,13 @@ export default function App(){
           const sc = parsed.filter(r => r.tipo_doc === "somcavo");
           const va = parsed.filter(r => r.tipo_doc === "varanda");
           const pl = parsed.filter(r => r.tipo_doc !== "somcavo" && r.tipo_doc !== "varanda");
+          // CORREÇÃO BUG 1: extrai o summary embutido pelo parseSomCavo e acumula em scSummary
+          if(sc.length && parsed._summary){
+            Object.entries(parsed._summary).forEach(([torre, vals]) => {
+              if(!scSummary[torre]) scSummary[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 };
+              scSummary[torre] = { ...scSummary[torre], ...vals };
+            });
+          }
           somcavo = [...somcavo, ...sc];
           varanda = [...varanda, ...va];
           if(pl.length) planilhas = [...planilhas, ...pl];
@@ -885,6 +945,13 @@ export default function App(){
             const sc = parsed.filter(r => r.tipo_doc === "somcavo");
             const va = parsed.filter(r => r.tipo_doc === "varanda");
             const pl = parsed.filter(r => r.tipo_doc !== "somcavo" && r.tipo_doc !== "varanda");
+            // CORREÇÃO BUG 1: mesmo para XLSX
+            if(sc.length && parsed._summary){
+              Object.entries(parsed._summary).forEach(([torre, vals]) => {
+                if(!scSummary[torre]) scSummary[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 };
+                scSummary[torre] = { ...scSummary[torre], ...vals };
+              });
+            }
             somcavo = [...somcavo, ...sc];
             varanda = [...varanda, ...va];
             planilhas = [...planilhas, ...pl];
@@ -930,7 +997,6 @@ export default function App(){
   const shaftData  = useMemo(() => calcTipo(scoped, "shaft"),      [scoped]);
   const capData    = useMemo(() => calcTipo(scoped, "capiacos"),   [scoped]);
   const passData   = useMemo(() => calcTipo(scoped, "passantes"),  [scoped]);
-  // CORREÇÃO: usar calcEsquadrias em vez de calcTipo para esquadrias
   const esqData    = useMemo(() => calcEsquadrias(scoped),         [scoped]);
 
   const shaftTotal  = Object.values(shaftData.counts).reduce((a,b) => a+b, 0) - (shaftData.counts["N/A"]||0);
@@ -939,7 +1005,6 @@ export default function App(){
   const capProb     = (capData.counts["Q"]||0) + (capData.counts["N"]||0) + (capData.counts["Q.I"]||0) + (capData.counts["F"]||0);
   const passTotal   = Object.values(passData.counts).reduce((a,b) => a+b, 0);
   const passProb    = passTotal - (passData.counts["OK"]||0) - (passData.counts["N/V"]||0);
-  // CORREÇÃO: esqInst e esqTotal vêm direto de calcEsquadrias
   const esqInst     = esqData.esqInst  ?? (esqData.counts["E"] || 0);
   const esqTotal    = esqData.esqTotal ?? Object.values(esqData.counts).reduce((a,b) => a+b, 0);
 
@@ -973,7 +1038,7 @@ export default function App(){
       <div style={{maxWidth:1280,margin:"0 auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{background:"#082f49",color:C.accent,borderRadius:999,padding:"3px 12px",fontSize:12,fontWeight:"bold"}}>FVS Qualidade</span>
-          <span style={{color:C.muted,fontSize:12}}>v4.6</span>
+          <span style={{color:C.muted,fontSize:12}}>v4.7</span>
         </div>
         <h1 style={{fontSize:32,margin:"0 0 4px",color:C.white}}>Dashboard de Verificação de Serviços</h1>
         <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Cerâmica Varanda · Som Cavo · Contrapiso · Portas</p>
