@@ -1142,7 +1142,27 @@ export default function App(){
                     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:14,marginBottom:4}}>
                       <KPI label="Pedras reprovadas"    value={somCavoData.totalPedrasReprov} sub="incidências som cavo" color={C.bad}/>
                       <KPI label="% pedras c/ som cavo" value={`${somCavoData.pctGeralPedras}%`} sub="pedras reprov / previstas" color={somCavoData.pctGeralPedras>=5?C.bad:somCavoData.pctGeralPedras>=2?C.orange:C.warn}/>
-                      <KPI label="Ambientes reprovados" value={somCavoData.totalAmbReprov} sub={`de ${somCavoData.totalAmbVerif} verificados`} color={C.orange}/>
+                      <div style={{background:C.card,borderRadius:14,padding:"18px 22px",borderLeft:`4px solid ${C.orange}`}}>
+                        <div style={{fontSize:10,textTransform:"uppercase",color:C.muted,fontWeight:"bold",marginBottom:6}}>Ambientes reprovados</div>
+                        <div style={{fontSize:30,fontWeight:"bold",color:C.white,marginBottom:6}}>{somCavoData.totalAmbReprov} <span style={{fontSize:13,color:C.muted,fontWeight:"normal"}}>de {somCavoData.totalAmbVerif} verificados</span></div>
+                        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                          {somCavoData.torreTable.map(t => {
+                            const pct = t.verif > 0 ? Math.round(t.reprov / t.verif * 100) : 0;
+                            return (
+                              <div key={t.torre} style={{display:"flex",alignItems:"center",gap:8}}>
+                                <div style={{width:52,fontSize:11,color:C.muted,flexShrink:0}}>Torre {t.torre}</div>
+                                <div style={{flex:1,background:"#0f172a",borderRadius:3,height:14,position:"relative"}}>
+                                  <div style={{width:`${pct}%`,background:pct>=30?C.bad:pct>=15?C.orange:C.warn,height:"100%",borderRadius:3}}/>
+                                </div>
+                                <div style={{width:90,fontSize:11,color:C.white,textAlign:"right",flexShrink:0}}>
+                                  <span style={{color:t.reprov>0?C.orange:C.ok,fontWeight:"bold"}}>{t.reprov}</span>
+                                  <span style={{color:C.muted}}> / {t.verif} ({pct}%)</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
                     <Box title={`Pedras por ambiente — ${tL(somCavoTorreFilter)}`}>
                       <div style={{display:"flex",flexDirection:"column",gap:8}}>
