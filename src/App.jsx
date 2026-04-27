@@ -315,10 +315,12 @@ function calcSomCavo(rows, summary){
     .map(x => ({ ...x, ambientes:[...x.ambientes].join(", ") }))
     .sort((a, b) => b.pedras - a.pedras);
 
-  // CORREÇÃO BUG 2: totais reais do CSV (não hardcoded)
-  const totalAmbVerif  = Object.values(mergedSummary).reduce((s, x) => s + x.verif,  0)
+  // CORREÇÃO BUG 2: totais reais do CSV (não hardcoded) — respeitando o filtro de torre
+  const summaryEntriesTotalize = Object.entries(mergedSummary)
+    .filter(([t]) => torresSet.size === 0 || torresSet.has(t));
+  const totalAmbVerif  = summaryEntriesTotalize.reduce((s, [,x]) => s + x.verif,  0)
                       || filtered.filter(r => r.status !== "N/V").length;
-  const totalAmbReprov = Object.values(mergedSummary).reduce((s, x) => s + x.reprov, 0)
+  const totalAmbReprov = summaryEntriesTotalize.reduce((s, [,x]) => s + x.reprov, 0)
                       || filtered.filter(r => r.status === "R").length;
   const totalPedrasReprov = filtered.filter(r => r.status === "R").reduce((a, r) => a + (r.pedras||0), 0);
 
