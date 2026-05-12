@@ -1113,7 +1113,8 @@ export default function App(){
   const [fvsTorreFilter, setFvsTorreFilter]             = useState("TODAS");
   const [varandaTorreFilter, setVarandaTorreFilter]     = useState("TODAS");
   const [somCavoTorreFilter, setSomCavoTorreFilter]     = useState("TODAS");
-  const [forroTipoFilter, setForroTipoFilter]           = useState("todos");
+  const [forroSubTab, setForroSubTab]                   = useState("acartonado");
+  const [forroTorreFilter, setForroTorreFilter]         = useState("TODAS");
 
   const handleFile = useCallback(async e => {
     const files = Array.from(e.target.files || []);
@@ -1206,7 +1207,9 @@ export default function App(){
   const esqData      = useMemo(() => calcEsquadrias(scoped),         [scoped]);
   const portasData   = useMemo(() => calcPortas(scoped),             [scoped]);
   const guardaData   = useMemo(() => calcGuardaCorpos(scoped),       [scoped]);
-  const forrosData   = useMemo(() => calcForros(scoped, forroTipoFilter), [scoped, forroTipoFilter]);
+  const forrosTorres = useMemo(() => ["TODAS", ...[...new Set(allRows.filter(r => r.tipo === "forros").map(r => r.torre).filter(Boolean))].sort()], [allRows]);
+  const forrosScoped = useMemo(() => forroTorreFilter === "TODAS" ? allRows : allRows.filter(r => r.torre === forroTorreFilter), [allRows, forroTorreFilter]);
+  const forrosData   = useMemo(() => calcForros(forrosScoped, forroSubTab), [forrosScoped, forroSubTab]);
 
   const shaftTotal  = Object.values(shaftData.counts).reduce((a,b) => a+b, 0) - (shaftData.counts["N/A"]||0);
   const shaftAberto = shaftData.counts["A"] || 0;
@@ -1369,27 +1372,35 @@ export default function App(){
 
                 {/* ─── FORROS ─── */}
                 {planTab === "forros" && <div>
-                  <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8,marginTop:16,marginBottom:4}}>
-                    <span style={{fontSize:11,color:C.muted}}>TIPO</span>
-                    <select value={forroTipoFilter} onChange={e => setForroTipoFilter(e.target.value)} style={selStyle}>
-                      <option value="todos">Todos os forros</option>
-                      <option value="acartonado">Forro Acartonado</option>
-                      <option value="gesso">Forro de Gesso</option>
-                    </select>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginTop:16,marginBottom:4}}>
+                    {/* Sub-tabs: Acartonado / Gesso */}
+                    <div style={{display:"flex",gap:3}}>
+                      {[{id:"acartonado",label:"🧱 Forro Acartonado"},{id:"gesso",label:"⬜ Forro de Gesso"}].map(st => (
+                        <button key={st.id} onClick={() => setForroSubTab(st.id)} style={{background:forroSubTab===st.id?C.blue:"transparent",color:forroSubTab===st.id?C.white:C.muted,border:`1px solid ${forroSubTab===st.id?C.blue:C.border}`,borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:forroSubTab===st.id?"bold":"normal",fontSize:13}}>
+                          {st.label}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Filtro de Torre */}
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:11,color:C.muted}}>TORRE</span>
+                      <select value={forroTorreFilter} onChange={e => setForroTorreFilter(e.target.value)} style={selStyle}>
+                        {forrosTorres.map(t => <option key={t} value={t}>{tL(t)}</option>)}
+                      </select>
+                    </div>
                   </div>
-                  <Box title={`Distribuição — Forros (${forroTipoFilter === "todos" ? "Acartonado + Gesso" : forroTipoFilter === "acartonado" ? "Acartonado" : "Gesso"}) — ${tL(torreFilter)}`}>
+                  <Box title={`Distribuição — ${forroSubTab === "acartonado" ? "Forro Acartonado" : "Forro de Gesso"} — ${tL(forroTorreFilter)}`}>
                     <BarChart counts={forrosData.counts} labels={CLASS.forros.labels} colors={CLASS.forros.colors}/>
                   </Box>
-                  <Box title="Por Torre — Forros"><TabelaTorre data={forrosData}/></Box>
+                  <Box title={`Por Torre — ${forroSubTab === "acartonado" ? "Forro Acartonado" : "Forro de Gesso"}`}><TabelaTorre data={forrosData}/></Box>
                   {forrosData.byApto.length > 0 && (
-                    <Box title={`Por Apartamento — Forros — ${tL(torreFilter)}`}>
+                    <Box title={`Por Apartamento — ${forroSubTab === "acartonado" ? "Forro Acartonado" : "Forro de Gesso"} — ${tL(forroTorreFilter)}`}>
                       <div style={{overflowX:"auto"}}>
-                        <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
-                          <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Tipo Forro"/><TH c="Total"/><TH c="Problemas"/><TH c="% Prob."/><TH c="Status encontrados"/></tr></thead>
+                        <table style={{width:"100%",borderCollapse:"collapse",minWidth:650}}>
+                          <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Total"/><TH c="Problemas"/><TH c="% Prob."/><TH c="Status encontrados"/></tr></thead>
                           <tbody>{forrosData.byApto.map((r,i) => (
                             <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
                               <TD c={r.torre} color={C.accent} bold/><TD c={r.apto} bold/><TD c={r.pav}/>
-                              <TD c={r.tipoForro === "acartonado" ? "Acartonado" : "Gesso"} color={C.muted}/>
                               <TD c={r.total}/>
                               <TD c={r.prob} color={r.prob>0?C.bad:C.ok}/><TD c={r.pct}/><TD c={r.statuses||"—"} color={r.statuses?C.warn:C.muted}/>
                             </tr>
