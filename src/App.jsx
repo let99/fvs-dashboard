@@ -931,9 +931,11 @@ function calcVaranda(rows){
 }
 
 // ─── Componentes UI ───────────────────────────────────────────────────────
-function BarChart({ counts, labels, colors }){
+function BarChart({ counts, labels, colors, excludeFromTotal }){
   const entries = Object.entries(counts).filter(([k,v]) => v > 0 && labels?.[k]).sort((a,b) => b[1]-a[1]);
-  const total = entries.reduce((a,[,v]) => a+v, 0) || 1, maxVal = entries[0]?.[1] || 1;
+  const excluded = new Set(excludeFromTotal || []);
+  const total = entries.filter(([k]) => !excluded.has(k)).reduce((a,[,v]) => a+v, 0) || 1;
+  const maxVal = entries[0]?.[1] || 1;
   return (
     <div style={{display:"flex",flexDirection:"column",gap:8}}>
       {entries.map(([k,v],idx) => {
@@ -1211,7 +1213,7 @@ export default function App(){
   const forrosScoped = useMemo(() => forroTorreFilter === "TODAS" ? allRows : allRows.filter(r => r.torre === forroTorreFilter), [allRows, forroTorreFilter]);
   const forrosData   = useMemo(() => calcForros(forrosScoped, forroSubTab), [forrosScoped, forroSubTab]);
 
-  const shaftTotal  = Object.values(shaftData.counts).reduce((a,b) => a+b, 0) - (shaftData.counts["N/A"]||0);
+  const shaftTotal  = Object.values(shaftData.counts).reduce((a,b) => a+b, 0) - (shaftData.counts["N/A"]||0) - (shaftData.counts["N/V"]||0) - (shaftData.counts["NF"]||0) - (shaftData.counts["?"]||0);
   const shaftAberto = shaftData.counts["A"] || 0;
   const capTotal    = Object.values(capData.counts).reduce((a,b) => a+b, 0);
   const capProb     = (capData.counts["Q"]||0) + (capData.counts["N"]||0) + (capData.counts["Q.I"]||0) + (capData.counts["F"]||0);
@@ -1319,7 +1321,7 @@ export default function App(){
                 </div>
 
                 {planTab === "shafts" && <div>
-                  <Box title={`Distribuição — Shafts — ${tL(torreFilter)}`}><BarChart counts={shaftData.counts} labels={CLASS.shaft.labels} colors={CLASS.shaft.colors}/></Box>
+                  <Box title={`Distribuição — Shafts — ${tL(torreFilter)}`}><BarChart counts={shaftData.counts} labels={CLASS.shaft.labels} colors={CLASS.shaft.colors} excludeFromTotal={["N/A","N/V","?","NF"]}/></Box>
                   <Box title="Por Torre — Shafts"><TabelaTorre data={shaftData}/></Box>
                   <Box title={`Por Apartamento — Shafts — ${tL(torreFilter)}`}><TabelaApto data={shaftData}/></Box>
                 </div>}
