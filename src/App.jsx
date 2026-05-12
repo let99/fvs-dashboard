@@ -583,7 +583,7 @@ function detectTipo(fileName, rows){
   if(/shaft/i.test(fn)) return "shaft";
   if(/capiaç|capiac/i.test(fn)) return "capiacos";
   if(/passante/i.test(fn)) return "passantes";
-  if(/esquadria/i.test(fn) && !/tipologia/i.test(fn)) return "esquadrias";
+  if(/esquadria/i.test(fn)) return "esquadrias";
   if(/cerâmica.*varanda|varanda.*cerâmica|mapeamento.*varanda/i.test(fn)) return "varanda";
   if(/som.cavo|mapeamento.*fvs.*cer|mapeamento.*cer.*apto/i.test(fn)) return "somcavo";
   if(/porta.*madeira|madeira.*porta/i.test(fn)) return "portas";
@@ -830,6 +830,11 @@ function parseFile(fileName, csvText){
       if(/guarda.corpo|gradil/i.test(head)) return parseGuardaCorpos(rows, fileName);
       if(/forro.*acartonado/i.test(head)) return parseForros(rows, fileName, "acartonado");
       if(/forro.*gesso/i.test(head)) return parseForros(rows, fileName, "gesso");
+      if(/serviço.*esquadria|precedente.*esquadria|esquadria/i.test(head)){
+        const summary = parseEsquadriasSummary(rows, fileName);
+        if(summary) return summary;
+        return parseEsquadrias(rows, fileName);
+      }
       return [];
     }
   }
