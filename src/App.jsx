@@ -142,72 +142,37 @@ const PEDRAS_PREVISTAS = {
   D: [112+84,  360+270, 732+549,  276+207,44+33,   316+237, 344+258, 440+330, 420+315, 412+309],
 };
 
-// ─── CORREÇÃO BUG 1: parseSomCavo agora também extrai o bloco de totais
-// por torre (linhas "AMBIENTES VERIFICADOS", "AMBIENTES REPROVADOS", "N/V") do CSV
-// e retorna { rows, summary } em vez de só rows
 function parseSomCavo(rows, fileName){
   const result = [];
-
-  // Tenta extrair summary do bloco de legenda no topo do arquivo
-  // Formato esperado: linhas com LEGENDA | TOTAL TORRE A | TOTAL TORRE B | ...
   const summaryOut = {};
-  const legendHeadIdx = rows.findIndex(r => {
-    const flat = r.join(" ");
-    return /TOTAL TORRE [AB]/i.test(flat);
-  });
+  const legendHeadIdx = rows.findIndex(r => { const flat = r.join(" "); return /TOTAL TORRE [AB]/i.test(flat); });
   if(legendHeadIdx !== -1){
     const headRow = rows[legendHeadIdx];
     const torresCols = [];
-    headRow.forEach((cell, ci) => {
-      const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i);
-      if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci });
-    });
-    // Lê linhas de totais logo abaixo do cabeçalho
-    const SUMMARY_MAP = {
-      "NÃO VERIFICADO": "nv",
-      "N/V": "nv",
-      "AMBIENTES VERIFICADOS": "verif",
-      "AMBIENTES TOTAIS": "total",
-      "AMBIENTES REPROVADOS": "reprov",
-    };
+    headRow.forEach((cell, ci) => { const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i); if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci }); });
+    const SUMMARY_MAP = { "NÃO VERIFICADO":"nv","N/V":"nv","AMBIENTES VERIFICADOS":"verif","AMBIENTES TOTAIS":"total","AMBIENTES REPROVADOS":"reprov" };
     for(let i = legendHeadIdx + 1; i < Math.min(legendHeadIdx + 10, rows.length); i++){
       const r = rows[i];
       const label = san(fix(r[0] || r[1] || "")).toUpperCase().trim();
-      // Tenta fazer match com qualquer chave conhecida
       let key = null;
-      for(const [pattern, k] of Object.entries(SUMMARY_MAP)){
-        if(label.includes(pattern)) { key = k; break; }
-      }
+      for(const [pattern, k] of Object.entries(SUMMARY_MAP)){ if(label.includes(pattern)) { key = k; break; } }
       if(!key) continue;
       torresCols.forEach(({ torre, col }) => {
-        // Busca o primeiro número válido na janela dessa torre
         for(let x = col; x < col + 4 && x < r.length; x++){
           const n = parseInt(san(r[x]));
-          if(!isNaN(n) && n >= 0){
-            if(!summaryOut[torre]) summaryOut[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 };
-            summaryOut[torre][key] = n;
-            break;
-          }
+          if(!isNaN(n) && n >= 0){ if(!summaryOut[torre]) summaryOut[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 }; summaryOut[torre][key] = n; break; }
         }
       });
     }
   }
-
-  // Parser de linhas de dados (apto/torre/valores)
-  const headerIdxs = rows.reduce((acc, r, i) => {
-    if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i);
-    return acc;
-  }, []);
+  const headerIdxs = rows.reduce((acc, r, i) => { if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i); return acc; }, []);
   headerIdxs.forEach((hi, hIdx) => {
     const hRow = rows[hi];
     const blocos = [];
     hRow.forEach((cell, ci) => {
       if(!/^apto$/i.test(san(cell))) return;
       for(let ti = ci+1; ti <= ci+2 && ti < hRow.length; ti++){
-        if(/^torre$/i.test(san(hRow[ti]))){
-          blocos.push({ aptoCol:ci, torreCol:ti, ambStart:ti+1 });
-          break;
-        }
+        if(/^torre$/i.test(san(hRow[ti]))){ blocos.push({ aptoCol:ci, torreCol:ti, ambStart:ti+1 }); break; }
       }
     });
     if(!blocos.length) return;
@@ -216,40 +181,24 @@ function parseSomCavo(rows, fileName){
       const r = rows[i];
       if(r.every(c => !san(c))) continue;
       for(const b of blocos){
-        const apto = san(r[b.aptoCol]);
-        const torre = san(r[b.torreCol]).toUpperCase();
-        if(!/^\d{3,4}$/.test(apto)) continue;
-        if(!/^[A-D]$/.test(torre)) continue;
+        const apto = san(r[b.aptoCol]), torre = san(r[b.torreCol]).toUpperCase();
+        if(!/^\d{3,4}$/.test(apto) || !/^[A-D]$/.test(torre)) continue;
         SOMCAVO_AMBIENTES.forEach((amb, j) => {
           const raw = san(r[b.ambStart + j]);
-          // CORREÇÃO BUG 3: célula vazia = não lida (skip); "0" = verificado sem pedras reprovadas (status A)
           if(raw === "" || raw === undefined) return;
-          if(/n\/v/i.test(raw)){
-            result.push({ tipo_doc:"somcavo", torre, apto, pav:pav(apto), ambiente:amb, pedras:null, status:"N/V", fonte:fileName });
-          } else {
-            const n = parseInt(raw);
-            if(isNaN(n)) return;
-            result.push({ tipo_doc:"somcavo", torre, apto, pav:pav(apto), ambiente:amb, pedras:n, status:n>0?"R":"A", fonte:fileName });
-          }
+          if(/n\/v/i.test(raw)){ result.push({ tipo_doc:"somcavo", torre, apto, pav:pav(apto), ambiente:amb, pedras:null, status:"N/V", fonte:fileName }); }
+          else { const n = parseInt(raw); if(isNaN(n)) return; result.push({ tipo_doc:"somcavo", torre, apto, pav:pav(apto), ambiente:amb, pedras:n, status:n>0?"R":"A", fonte:fileName }); }
         });
       }
     }
   });
-
-  // Retorna rows com summary embutido para consumo no handleFile
   result._summary = Object.keys(summaryOut).length > 0 ? summaryOut : null;
   return result;
 }
 
-// ─── CORREÇÃO BUG 2: calcSomCavo recalcula % a partir dos dados reais ────
-// pctGeralPedras = totalPedrasReprov / totalPedrasPrevistas (não média de %)
-// totalAmbVerif e totalAmbReprov lidos do summary extraído do CSV (não hardcoded)
 function calcSomCavo(rows, summary){
   const filtered = rows.filter(r => r.tipo_doc === "somcavo");
   const torresSet = new Set(filtered.map(r => r.torre).filter(Boolean));
-
-  // Reconta ambientes verificados e reprovados diretamente dos dados linha a linha
-  // Isso garante que células "0" (verificadas sem reprovação) sejam contadas corretamente
   const ambContByTorre = {};
   filtered.forEach(r => {
     const t = r.torre;
@@ -257,80 +206,374 @@ function calcSomCavo(rows, summary){
     if(r.status === "N/V") ambContByTorre[t].nv++;
     else { ambContByTorre[t].verif++; if(r.status === "R") ambContByTorre[t].reprov++; }
   });
-
-  // Mescla com summary extraído (para total de ambientes por torre = 220)
   const mergedSummary = {};
   const allTorres = new Set([...Object.keys(summary || {}), ...Object.keys(ambContByTorre)]);
   allTorres.forEach(t => {
-    const fromCSV  = (summary || {})[t] || {};
-    const fromRows = ambContByTorre[t] || {};
-    mergedSummary[t] = {
-      verif:  fromCSV.verif  ?? fromRows.verif  ?? 0,
-      reprov: fromCSV.reprov ?? fromRows.reprov ?? 0,
-      total:  fromCSV.total  ?? 220,
-      nv:     fromCSV.nv     ?? fromRows.nv     ?? 0,
-    };
+    const fromCSV = (summary || {})[t] || {}, fromRows = ambContByTorre[t] || {};
+    mergedSummary[t] = { verif: fromCSV.verif ?? fromRows.verif ?? 0, reprov: fromCSV.reprov ?? fromRows.reprov ?? 0, total: fromCSV.total ?? 220, nv: fromCSV.nv ?? fromRows.nv ?? 0 };
   });
-
   const torreTable = [...(torresSet.size > 0 ? torresSet : new Set(Object.keys(PEDRAS_PREVISTAS)))]
     .filter(t => !torresSet.size || torresSet.has(t))
     .map(torre => {
-      const pedras   = filtered.filter(r => r.torre === torre && r.status === "R").reduce((a, r) => a + (r.pedras||0), 0);
+      const pedras = filtered.filter(r => r.torre === torre && r.status === "R").reduce((a, r) => a + (r.pedras||0), 0);
       const totalPrev = (PEDRAS_PREVISTAS[torre] || []).reduce((a, b) => a + b, 0);
       const s = mergedSummary[torre] || { verif:0, reprov:0, total:220, nv:0 };
-      // pct por torre = pedras reprovadas / pedras previstas (não hardcoded)
       const pctPedras = totalPrev > 0 ? parseFloat((pedras / totalPrev * 100).toFixed(2)) : 0;
       return { torre, pedras, verif:s.verif, reprov:s.reprov, total:s.total, nv:s.nv, totalPrev, pctPedras };
-    })
-    .sort((a, b) => a.torre.localeCompare(b.torre));
-
+    }).sort((a, b) => a.torre.localeCompare(b.torre));
   const byAmb = {};
   filtered.forEach(r => {
     if(!byAmb[r.ambiente]) byAmb[r.ambiente] = { ambiente:r.ambiente, pedras:0, ambReprov:0, ambTotal:0 };
     if(r.status === "N/V") return;
-    byAmb[r.ambiente].ambTotal++;
-    byAmb[r.ambiente].pedras += r.pedras || 0;
+    byAmb[r.ambiente].ambTotal++; byAmb[r.ambiente].pedras += r.pedras || 0;
     if(r.status === "R") byAmb[r.ambiente].ambReprov++;
   });
   const paretoAmb = Object.values(byAmb).map(x => {
     const ambIdx = SOMCAVO_AMBIENTES.indexOf(x.ambiente);
-    const totalPrev = ambIdx >= 0
-      ? [...(torresSet.size > 0 ? torresSet : new Set(Object.keys(PEDRAS_PREVISTAS)))]
-          .reduce((s, t) => s + ((PEDRAS_PREVISTAS[t] || [])[ambIdx] || 0), 0)
-      : 0;
+    const totalPrev = ambIdx >= 0 ? [...(torresSet.size > 0 ? torresSet : new Set(Object.keys(PEDRAS_PREVISTAS)))].reduce((s, t) => s + ((PEDRAS_PREVISTAS[t] || [])[ambIdx] || 0), 0) : 0;
     return { ...x, totalPrev, pctPedras: totalPrev > 0 ? parseFloat((x.pedras/totalPrev*100).toFixed(2)) : 0 };
   }).sort((a, b) => b.pedras - a.pedras);
-
   const byApto = {};
   filtered.forEach(r => {
     const key = `${r.torre}-${r.apto}`;
     if(!byApto[key]) byApto[key] = { torre:r.torre, apto:r.apto, pav:r.pav, pedras:0, ambReprov:0, ambTotal:0, ambientes:new Set() };
     if(r.status === "N/V") return;
-    byApto[key].ambTotal++;
-    byApto[key].pedras += r.pedras || 0;
+    byApto[key].ambTotal++; byApto[key].pedras += r.pedras || 0;
     if(r.status === "R"){ byApto[key].ambReprov++; byApto[key].ambientes.add(r.ambiente); }
   });
-  const aptoTable = Object.values(byApto)
-    .filter(x => x.pedras > 0 || x.ambReprov > 0)
-    .map(x => ({ ...x, ambientes:[...x.ambientes].join(", ") }))
-    .sort((a, b) => b.pedras - a.pedras);
-
-  // CORREÇÃO BUG 2: totais reais do CSV (não hardcoded) — respeitando o filtro de torre
-  const summaryEntriesTotalize = Object.entries(mergedSummary)
-    .filter(([t]) => torresSet.size === 0 || torresSet.has(t));
-  const totalAmbVerif  = summaryEntriesTotalize.reduce((s, [,x]) => s + x.verif,  0)
-                      || filtered.filter(r => r.status !== "N/V").length;
-  const totalAmbReprov = summaryEntriesTotalize.reduce((s, [,x]) => s + x.reprov, 0)
-                      || filtered.filter(r => r.status === "R").length;
+  const aptoTable = Object.values(byApto).filter(x => x.pedras > 0 || x.ambReprov > 0).map(x => ({ ...x, ambientes:[...x.ambientes].join(", ") })).sort((a, b) => b.pedras - a.pedras);
+  const summaryEntriesTotalize = Object.entries(mergedSummary).filter(([t]) => torresSet.size === 0 || torresSet.has(t));
+  const totalAmbVerif  = summaryEntriesTotalize.reduce((s, [,x]) => s + x.verif, 0) || filtered.filter(r => r.status !== "N/V").length;
+  const totalAmbReprov = summaryEntriesTotalize.reduce((s, [,x]) => s + x.reprov, 0) || filtered.filter(r => r.status === "R").length;
   const totalPedrasReprov = filtered.filter(r => r.status === "R").reduce((a, r) => a + (r.pedras||0), 0);
-
-  // CORREÇÃO BUG 2: % geral = pedras reprovadas / total de pedras previstas (não média de %)
   const grandTotalPrev = torreTable.reduce((s, t) => s + t.totalPrev, 0);
-  const pctGeralPedras = grandTotalPrev > 0
-    ? parseFloat((totalPedrasReprov / grandTotalPrev * 100).toFixed(2))
-    : 0;
-
+  const pctGeralPedras = grandTotalPrev > 0 ? parseFloat((totalPedrasReprov / grandTotalPrev * 100).toFixed(2)) : 0;
   return { paretoAmb, torreTable, aptoTable, totalPedrasReprov, totalAmbReprov, totalAmbVerif, pctGeralPedras };
+}
+
+// ─── PORTAS DE MADEIRA ────────────────────────────────────────────────────
+const PORTAS_AMBIENTES = ["SALA","COZINHA","DEPÓSITO","BWC SERVIÇO","ÁREA DE SERVIÇO","LAVABO","SUÍTE 04","BWC SUÍTE 03 E 04","SUÍTE 03","SUÍTE 02","BWC SUÍTE 02","SUÍTE MASTER","BWC SUÍTE MASTER"];
+const PORTAS_STATUS_VALID = new Set(["OK","SMA","M","A","NI","F","FO","NV","-"]);
+
+function parsePortas(rows, fileName){
+  const result = [];
+  // Tenta summary primeiro (bloco de legenda)
+  const legendIdx = rows.findIndex(r => {
+    const flat = r.join(" ");
+    return /TOTAL TORRE [AB]/i.test(flat) || /TOTAL TORRE A/i.test(flat);
+  });
+  if(legendIdx !== -1){
+    const headRow = rows[legendIdx];
+    const torresCols = [];
+    headRow.forEach((cell, ci) => {
+      const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i);
+      if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci });
+    });
+    if(torresCols.length >= 2){
+      const STATUS_MAP = { OK:"OK", SMA:"SMA", M:"M", A:"A", NI:"NI", F:"F", FO:"FO", NV:"NV" };
+      for(let i = legendIdx+1; i < Math.min(legendIdx+15, rows.length); i++){
+        const r = rows[i];
+        const statusCell = san(r[0]).toUpperCase().split(" ")[0];
+        if(/^apto$|^total$/i.test(statusCell)) break;
+        const status = STATUS_MAP[statusCell];
+        if(!status) continue;
+        torresCols.forEach(({ torre, col }, ti) => {
+          const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+6;
+          for(let x = col; x < Math.min(col+5, nextCol); x++){
+            const n = parseInt(san(r[x]));
+            if(!isNaN(n) && n >= 0){
+              for(let k = 0; k < n; k++) result.push({ tipo:"portas", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
+              break;
+            }
+          }
+        });
+      }
+      if(result.length > 0) return result;
+    }
+  }
+  // Parser linha a linha por apto
+  const hIdxs = rows.reduce((acc, r, i) => {
+    if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i);
+    return acc;
+  }, []);
+  for(const hi of hIdxs){
+    const hRow = rows[hi];
+    const blocos = [];
+    hRow.forEach((cell, ci) => {
+      if(!/^apto$/i.test(san(cell))) return;
+      for(let ti = ci+1; ti <= ci+2 && ti < hRow.length; ti++){
+        if(/^torre$/i.test(san(hRow[ti]))){
+          const headers = hRow.slice(ti+1).map(h => san(fix(h))).filter(Boolean);
+          blocos.push({ aptoCol:ci, torreCol:ti, ambStart:ti+1, headers });
+          break;
+        }
+      }
+    });
+    if(!blocos.length) continue;
+    for(let i = hi+1; i < rows.length; i++){
+      const r = rows[i];
+      for(const b of blocos){
+        const a = san(r[b.aptoCol]), t = san(r[b.torreCol]).toUpperCase();
+        if(!a || !isApto(a) || !t || !isTorre(t)) continue;
+        b.headers.forEach((amb, j) => {
+          const val = san(r[b.ambStart+j]).toUpperCase();
+          if(!val || val === "-" || !PORTAS_STATUS_VALID.has(val)) return;
+          if(val === "-") return;
+          result.push({ tipo:"portas", torre:t, apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
+        });
+      }
+    }
+  }
+  return result;
+}
+
+function calcPortas(rows){
+  const filtered = rows.filter(r => r.tipo === "portas");
+  const counts = {};
+  const byTorre = {};
+  filtered.forEach(r => {
+    const s = r.status || "?";
+    counts[s] = (counts[s]||0) + 1;
+    const t = r.torre || "?";
+    if(!byTorre[t]) byTorre[t] = { torre:t, counts:{} };
+    byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
+  });
+  const byApto = {};
+  filtered.forEach(r => {
+    if(!r.apto) return;
+    const key = `${r.torre}-${r.apto}`;
+    if(!byApto[key]) byApto[key] = { torre:r.torre, apto:r.apto, pav:r.pav, total:0, prob:0, statuses:new Set() };
+    byApto[key].total++;
+    const PROB_STATUS = new Set(["SMA","M","A","NI","F","FO"]);
+    if(PROB_STATUS.has(r.status)){ byApto[key].prob++; byApto[key].statuses.add(r.status); }
+  });
+  return {
+    counts,
+    byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
+    byApto: Object.values(byApto).map(x => ({
+      ...x, verificacoes:x.total,
+      pct:`${x.total?Math.round(x.prob/x.total*100):0}%`,
+      statuses:[...x.statuses].join(", ")
+    })).sort((a,b) => a.torre.localeCompare(b.torre) || Number(String(a.apto).match(/\d+/)?.[0]||0) - Number(String(b.apto).match(/\d+/)?.[0]||0)),
+    total: Object.values(counts).reduce((a,b)=>a+b,0),
+    ok: counts["OK"]||0,
+  };
+}
+
+// ─── GUARDA-CORPOS E GRADIL ───────────────────────────────────────────────
+const GUARDACORPO_STATUS_VALID = new Set(["OK","NI","C","CM","CP","PC","GV","GA","S","NV","-"]);
+
+function parseGuardaCorpos(rows, fileName){
+  const result = [];
+  // Summary do bloco de legenda
+  const legendIdx = rows.findIndex(r => {
+    const flat = r.join(" ");
+    return /TORRE [AB]/i.test(flat) && /TORRE [CD]/i.test(flat);
+  });
+  if(legendIdx !== -1){
+    const headRow = rows[legendIdx];
+    const torresCols = [];
+    headRow.forEach((cell, ci) => {
+      const m = san(fix(cell)).match(/^TORRE ([A-D])$/i);
+      if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci });
+    });
+    if(torresCols.length >= 2){
+      const STATUS_MAP = { OK:"OK", NI:"NI", C:"C", CM:"CM", CP:"CP", PC:"PC", GV:"GV", GA:"GA", S:"S", NV:"NV" };
+      for(let i = legendIdx+1; i < Math.min(legendIdx+15, rows.length); i++){
+        const r = rows[i];
+        const statusCell = san(r[0]).toUpperCase().split(" ")[0];
+        if(/^apto$|^total$/i.test(statusCell)) break;
+        const status = STATUS_MAP[statusCell];
+        if(!status) continue;
+        torresCols.forEach(({ torre, col }, ti) => {
+          const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+4;
+          for(let x = col; x < Math.min(col+3, nextCol); x++){
+            const n = parseInt(san(r[x]));
+            if(!isNaN(n) && n >= 0){
+              for(let k = 0; k < n; k++) result.push({ tipo:"guardacorpos", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
+              break;
+            }
+          }
+        });
+      }
+      if(result.length > 0) return result;
+    }
+  }
+  // Linha a linha
+  const hIdxs = rows.reduce((acc, r, i) => {
+    if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i);
+    return acc;
+  }, []);
+  for(const hi of hIdxs){
+    const hRow = rows[hi];
+    const blocos = [];
+    hRow.forEach((cell, ci) => {
+      if(!/^apto$/i.test(san(cell))) return;
+      for(let ti = ci+1; ti <= ci+2 && ti < hRow.length; ti++){
+        if(/^torre$/i.test(san(hRow[ti]))){
+          const headers = hRow.slice(ti+1).map(h => san(fix(h))).filter(Boolean);
+          blocos.push({ aptoCol:ci, torreCol:ti, ambStart:ti+1, headers });
+          break;
+        }
+      }
+    });
+    if(!blocos.length) continue;
+    for(let i = hi+1; i < rows.length; i++){
+      const r = rows[i];
+      for(const b of blocos){
+        const a = san(r[b.aptoCol]), t = san(r[b.torreCol]).toUpperCase();
+        if(!a || !isApto(a) || !t || !isTorre(t)) continue;
+        b.headers.forEach((amb, j) => {
+          const val = san(r[b.ambStart+j]).toUpperCase();
+          if(!val || val === "-" || !GUARDACORPO_STATUS_VALID.has(val)) return;
+          if(val === "-") return;
+          result.push({ tipo:"guardacorpos", torre:t, apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
+        });
+      }
+    }
+  }
+  return result;
+}
+
+function calcGuardaCorpos(rows){
+  const filtered = rows.filter(r => r.tipo === "guardacorpos");
+  const counts = {};
+  const byTorre = {};
+  filtered.forEach(r => {
+    const s = r.status || "?";
+    counts[s] = (counts[s]||0) + 1;
+    const t = r.torre || "?";
+    if(!byTorre[t]) byTorre[t] = { torre:t, counts:{} };
+    byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
+  });
+  const byApto = {};
+  filtered.forEach(r => {
+    if(!r.apto) return;
+    const key = `${r.torre}-${r.apto}`;
+    if(!byApto[key]) byApto[key] = { torre:r.torre, apto:r.apto, pav:r.pav, total:0, prob:0, statuses:new Set() };
+    byApto[key].total++;
+    const PROB_STATUS = new Set(["NI","C","CM","CP","PC","GV","GA","S"]);
+    if(PROB_STATUS.has(r.status)){ byApto[key].prob++; byApto[key].statuses.add(r.status); }
+  });
+  return {
+    counts,
+    byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
+    byApto: Object.values(byApto).map(x => ({
+      ...x, verificacoes:x.total,
+      pct:`${x.total?Math.round(x.prob/x.total*100):0}%`,
+      statuses:[...x.statuses].join(", ")
+    })).sort((a,b) => a.torre.localeCompare(b.torre) || Number(String(a.apto).match(/\d+/)?.[0]||0) - Number(String(b.apto).match(/\d+/)?.[0]||0)),
+    total: Object.values(counts).reduce((a,b)=>a+b,0),
+    ok: counts["OK"]||0,
+  };
+}
+
+// ─── FORROS (ACARTONADO + GESSO) ──────────────────────────────────────────
+const FORROS_STATUS_VALID = new Set(["OK","NI","F","FE","VA","PD","IN","NV","-"]);
+
+function parseForros(rows, fileName, tipoForro){
+  const result = [];
+  // Summary
+  const legendIdx = rows.findIndex(r => {
+    const flat = r.join(" ");
+    return (/TORRE [AB]/i.test(flat) || /TORRE A/i.test(flat)) && r.length > 3;
+  });
+  if(legendIdx !== -1){
+    const headRow = rows[legendIdx];
+    const torresCols = [];
+    headRow.forEach((cell, ci) => {
+      const m = san(fix(cell)).match(/^TORRE ([A-D])$/i);
+      if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci });
+    });
+    if(torresCols.length >= 2){
+      const STATUS_MAP = { OK:"OK", NI:"NI", F:"F", FE:"FE", VA:"VA", PD:"PD", IN:"IN", NV:"NV" };
+      for(let i = legendIdx+1; i < Math.min(legendIdx+15, rows.length); i++){
+        const r = rows[i];
+        const statusCell = san(r[0]).toUpperCase().split(" ")[0];
+        if(/^apto$|^total$/i.test(statusCell)) break;
+        const status = STATUS_MAP[statusCell];
+        if(!status) continue;
+        torresCols.forEach(({ torre, col }, ti) => {
+          const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+4;
+          for(let x = col; x < Math.min(col+3, nextCol); x++){
+            const n = parseInt(san(r[x]));
+            if(!isNaN(n) && n >= 0){
+              for(let k = 0; k < n; k++) result.push({ tipo:"forros", tipoForro, torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
+              break;
+            }
+          }
+        });
+      }
+      if(result.length > 0) return result;
+    }
+  }
+  // Linha a linha
+  const hIdxs = rows.reduce((acc, r, i) => {
+    if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i);
+    return acc;
+  }, []);
+  for(const hi of hIdxs){
+    const hRow = rows[hi];
+    const blocos = [];
+    hRow.forEach((cell, ci) => {
+      if(!/^apto$/i.test(san(cell))) return;
+      for(let ti = ci+1; ti <= ci+2 && ti < hRow.length; ti++){
+        if(/^torre$/i.test(san(hRow[ti]))){
+          const headers = hRow.slice(ti+1).map(h => san(fix(h))).filter(Boolean);
+          blocos.push({ aptoCol:ci, torreCol:ti, ambStart:ti+1, headers });
+          break;
+        }
+      }
+    });
+    if(!blocos.length) continue;
+    for(let i = hi+1; i < rows.length; i++){
+      const r = rows[i];
+      for(const b of blocos){
+        const a = san(r[b.aptoCol]), t = san(r[b.torreCol]).toUpperCase();
+        if(!a || !isApto(a) || !t || !isTorre(t)) continue;
+        b.headers.forEach((amb, j) => {
+          const val = san(r[b.ambStart+j]).toUpperCase();
+          if(!val || val === "-" || !FORROS_STATUS_VALID.has(val)) return;
+          if(val === "-") return;
+          result.push({ tipo:"forros", tipoForro, torre:t, apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
+        });
+      }
+    }
+  }
+  return result;
+}
+
+function calcForros(rows, tipoForro){
+  const filtered = rows.filter(r => r.tipo === "forros" && (tipoForro === "todos" || r.tipoForro === tipoForro));
+  const counts = {};
+  const byTorre = {};
+  filtered.forEach(r => {
+    const s = r.status || "?";
+    counts[s] = (counts[s]||0) + 1;
+    const t = r.torre || "?";
+    if(!byTorre[t]) byTorre[t] = { torre:t, counts:{} };
+    byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
+  });
+  const byApto = {};
+  filtered.forEach(r => {
+    if(!r.apto) return;
+    const key = `${r.torre}-${r.apto}-${r.tipoForro}`;
+    if(!byApto[key]) byApto[key] = { torre:r.torre, apto:r.apto, pav:r.pav, tipoForro:r.tipoForro, total:0, prob:0, statuses:new Set() };
+    byApto[key].total++;
+    const PROB_STATUS = new Set(["NI","F","FE","VA","PD","IN"]);
+    if(PROB_STATUS.has(r.status)){ byApto[key].prob++; byApto[key].statuses.add(r.status); }
+  });
+  return {
+    counts,
+    byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
+    byApto: Object.values(byApto).map(x => ({
+      ...x, verificacoes:x.total,
+      pct:`${x.total?Math.round(x.prob/x.total*100):0}%`,
+      statuses:[...x.statuses].join(", ")
+    })).sort((a,b) => a.torre.localeCompare(b.torre) || Number(String(a.apto).match(/\d+/)?.[0]||0) - Number(String(b.apto).match(/\d+/)?.[0]||0)),
+    total: Object.values(counts).reduce((a,b)=>a+b,0),
+    ok: counts["OK"]||0,
+  };
 }
 
 // ─── Detecção de tipo ─────────────────────────────────────────────────────
@@ -340,9 +583,13 @@ function detectTipo(fileName, rows){
   if(/shaft/i.test(fn)) return "shaft";
   if(/capiaç|capiac/i.test(fn)) return "capiacos";
   if(/passante/i.test(fn)) return "passantes";
-  if(/esquadria/i.test(fn)) return "esquadrias";
+  if(/esquadria/i.test(fn) && !/tipologia/i.test(fn)) return "esquadrias";
   if(/cerâmica.*varanda|varanda.*cerâmica|mapeamento.*varanda/i.test(fn)) return "varanda";
   if(/som.cavo|mapeamento.*fvs.*cer|mapeamento.*cer.*apto/i.test(fn)) return "somcavo";
+  if(/porta.*madeira|madeira.*porta/i.test(fn)) return "portas";
+  if(/guarda.corpo|gradil/i.test(fn)) return "guardacorpos";
+  if(/forro.*acarton|acarton.*forro/i.test(fn)) return "forro_acartonado";
+  if(/forro.*gesso|gesso.*forro/i.test(fn)) return "forro_gesso";
   if(/\b(ab|cd)\b/i.test(fn)) return "shaft";
   if(/casar/i.test(fn)) return "shaft";
   if(/casarão|casarao/i.test(head)) return "shaft";
@@ -353,6 +600,10 @@ function detectTipo(fileName, rows){
   if(/verifica.*capiaç|capiaç.*verifica/i.test(head)) return "capiacos";
   if(/verifica.*passante|passante.*verifica/i.test(head)) return "passantes";
   if(/serviço.*esquadria|precedente.*esquadria/i.test(head)) return "esquadrias";
+  if(/mapeamento.*porta.*madeira|porta.*madeira/i.test(head)) return "portas";
+  if(/guarda.corpo|gradil.*split/i.test(head)) return "guardacorpos";
+  if(/forro.*acartonado/i.test(head)) return "forro_acartonado";
+  if(/forro.*gesso/i.test(head)) return "forro_gesso";
   const hasShaftData = rows.slice(0,10).some(r => {
     const v = r.map(c => san(c).toUpperCase()).filter(Boolean);
     return /^\d{3,4}$/.test(v[0]) && /^[A-D]$/.test(v[1]) && v.slice(2,6).some(x => ["A","FS","FC","N/A","N/V"].includes(x));
@@ -386,10 +637,7 @@ function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
       const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+4;
       const windowEnd = Math.min(col+3, nextCol);
       let val = 0;
-      for(let x = col; x < windowEnd; x++){
-        const n = parseInt(san(r[x]));
-        if(!isNaN(n) && n >= 0){ val = n; break; }
-      }
+      for(let x = col; x < windowEnd; x++){ const n = parseInt(san(r[x])); if(!isNaN(n) && n >= 0){ val = n; break; } }
       for(let k = 0; k < val; k++) result.push({ tipo, torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
     });
   }
@@ -398,62 +646,36 @@ function parseSummaryByTorre(rows, fileName, tipo, statusMap, headerPattern){
 
 // ─── parseEsquadriasSummary ───────────────────────────────────────────────
 function parseEsquadriasSummary(rows, fileName){
-  const headIdx = rows.findIndex(r => {
-    const flat = r.join(" ");
-    return /TOTAL TORRE [AB]/i.test(flat) || /TOTAL TORRE A/i.test(flat);
-  });
+  const headIdx = rows.findIndex(r => { const flat = r.join(" "); return /TOTAL TORRE [AB]/i.test(flat) || /TOTAL TORRE A/i.test(flat); });
   if(headIdx === -1) return null;
-
   const headRow = rows[headIdx];
   const torresCols = [];
-  headRow.forEach((cell, ci) => {
-    const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i);
-    if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci });
-  });
+  headRow.forEach((cell, ci) => { const m = san(fix(cell)).match(/TOTAL TORRE ([A-D])/i); if(m) torresCols.push({ torre: m[1].toUpperCase(), col: ci }); });
   if(torresCols.length < 2) return null;
-
-  const ESQ_STATUS_MAP_LOCAL = {
-    S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E", CE:"CE", R:"R"
-  };
-
   const result = [];
-  const torreTotal = {};
-  const torreInst  = {};
-
+  const torreTotal = {}, torreInst = {};
   for(let i = headIdx+1; i < Math.min(headIdx+15, rows.length); i++){
     const r = rows[i];
     const statusCell = san(r[0]).toUpperCase();
-
     if(/CONTRAMARCOS\s+TOTAIS/i.test(statusCell) || /CONTRAMARCOS\s+TOTAIS/i.test(r.join(" "))){
       torresCols.forEach(({ torre, col }, ti) => {
         const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+6;
-        for(let x = col; x < Math.min(col+5, nextCol); x++){
-          const n = parseInt(san(r[x]));
-          if(!isNaN(n) && n > 0){ torreTotal[torre] = n; break; }
-        }
+        for(let x = col; x < Math.min(col+5, nextCol); x++){ const n = parseInt(san(r[x])); if(!isNaN(n) && n > 0){ torreTotal[torre] = n; break; } }
       });
       continue;
     }
-
+    const ESQ_STATUS_MAP_LOCAL = { S:"S", C:"C", "P.U":"P.U", F:"F", I:"I", E:"E", CE:"CE", R:"R" };
     const status = ESQ_STATUS_MAP_LOCAL[statusCell];
     if(!status) continue;
-
     torresCols.forEach(({ torre, col }, ti) => {
       const nextCol = ti+1 < torresCols.length ? torresCols[ti+1].col : col+6;
       let val = 0;
-      for(let x = col; x < Math.min(col+5, nextCol); x++){
-        const n = parseInt(san(r[x]));
-        if(!isNaN(n) && n >= 0){ val = n; break; }
-      }
+      for(let x = col; x < Math.min(col+5, nextCol); x++){ const n = parseInt(san(r[x])); if(!isNaN(n) && n >= 0){ val = n; break; } }
       if(status === "E") torreInst[torre] = (torreInst[torre]||0) + val;
-      for(let k = 0; k < val; k++){
-        result.push({ tipo:"esquadrias", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
-      }
+      for(let k = 0; k < val; k++) result.push({ tipo:"esquadrias", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
     });
   }
-
   if(result.length === 0) return null;
-
   result._torreTotal = torreTotal;
   result._torreInst  = torreInst;
   return result;
@@ -539,12 +761,9 @@ function parsePassantes(rows, fileName){
   return result;
 }
 
-const ESQ_STATUS_MAP = {S:"S",C:"C","P.U":"P.U",F:"F",I:"I",E:"E",CE:"CE",R:"R"};
-
 function parseEsquadrias(rows, fileName){
   const result = [];
   const STATUS_VALIDOS = new Set(["E","I","F","C","P.U","S","CE","R"]);
-
   function detectBlocos(hRow){
     const blocos = []; let ci = 0;
     while(ci < hRow.length){
@@ -562,14 +781,12 @@ function parseEsquadrias(rows, fileName){
     }
     return blocos;
   }
-
   const hLines = rows.reduce((acc, r, i) => {
     const first = san(r[0]);
     if(/^\d{3,4}$|^t[eé]rreo$/i.test(first)) return acc;
     if(r.some(c => /^torre$/i.test(san(c))) && r.filter(c => san(c).length > 2 && !/^apto$|^torre$/i.test(san(c))).length >= 3) acc.push(i);
     return acc;
   }, []);
-
   for(const hi of hLines){
     const blocos = detectBlocos(rows[hi]); if(!blocos.length) continue;
     for(let i = hi+1; i < rows.length; i++){
@@ -592,17 +809,29 @@ function parseFile(fileName, csvText){
   const rows = parseCSVLines(csvText);
   const tipo = detectTipo(fileName, rows);
   switch(tipo){
-    case "shaft":      return parseShafts(rows, fileName);
-    case "capiacos":   return parseCapiacos(rows, fileName);
-    case "passantes":  return parsePassantes(rows, fileName);
-    case "varanda":    return parseCeramicaVaranda(rows, fileName);
-    case "somcavo":    return parseSomCavo(rows, fileName);
+    case "shaft":            return parseShafts(rows, fileName);
+    case "capiacos":         return parseCapiacos(rows, fileName);
+    case "passantes":        return parsePassantes(rows, fileName);
+    case "varanda":          return parseCeramicaVaranda(rows, fileName);
+    case "somcavo":          return parseSomCavo(rows, fileName);
+    case "portas":           return parsePortas(rows, fileName);
+    case "guardacorpos":     return parseGuardaCorpos(rows, fileName);
+    case "forro_acartonado": return parseForros(rows, fileName, "acartonado");
+    case "forro_gesso":      return parseForros(rows, fileName, "gesso");
     case "esquadrias": {
       const summary = parseEsquadriasSummary(rows, fileName);
       if(summary) return summary;
       return parseEsquadrias(rows, fileName);
     }
-    default: return [];
+    default: {
+      // Tenta inferir pelo conteúdo
+      const head = rows.slice(0,8).flat().join(" ");
+      if(/porta.*madeira|madeira.*porta/i.test(head)) return parsePortas(rows, fileName);
+      if(/guarda.corpo|gradil/i.test(head)) return parseGuardaCorpos(rows, fileName);
+      if(/forro.*acartonado/i.test(head)) return parseForros(rows, fileName, "acartonado");
+      if(/forro.*gesso/i.test(head)) return parseForros(rows, fileName, "gesso");
+      return [];
+    }
   }
 }
 
@@ -611,30 +840,21 @@ const CLASS = {
   shaft:{ ok:["A"],warn:["FS"],na:["N/A","N/V","?","NF"], labels:{A:"Aberto",FS:"Fech. s/ cerâmica",FC:"Fech. c/ cerâmica","N/A":"N/A","N/V":"N/V",NF:"Não fechado","?":"Não verificado"}, colors:{A:"#16a34a",FS:"#f59e0b",FC:"#2563eb","N/A":"#94a3b8","N/V":"#64748b",NF:"#dc2626","?":"#475569"} },
   capiacos:{ ok:["OK"],warn:["Q","N","Q.I","F"],na:["N/V","N/A"], labels:{OK:"Correto",Q:"Sem queda",N:"Desnivelado","Q.I":"Queda invertida",F:"Falta fachada","N/V":"N/V"}, colors:{OK:"#16a34a",Q:"#dc2626",N:"#f59e0b","Q.I":"#b91c1c",F:"#ea580c","N/V":"#94a3b8"} },
   passantes:{ ok:["OK"],warn:["R","C","Q","P","F","S"],na:["N/V","N/A"], labels:{OK:"Correto",R:"Rente ao piso",C:"PEX chumbado",Q:"Quebrado",P:"Mal-fixado",F:"Falta tubo",S:"Sujeira","N/V":"N/V"}, colors:{OK:"#16a34a",R:"#dc2626",C:"#f59e0b",Q:"#b91c1c",P:"#ea580c",F:"#7c3aed",S:"#0891b2","N/V":"#94a3b8"} },
-  esquadrias:{
-    ok:  ["E"],
-    warn:["I","F","C","P.U","S","CE","R"],
-    na:  [],
-    labels:{
-      E:"Instalada",
-      I:"Pronto p/ instalar",
-      F:"Falta rejunte/fachada",
-      C:"Falta contramarco",
-      "P.U":"P.U incompleto",
-      S:"Contramarco sujo",
-      CE:"Falta cerâmica/gesso",
-      R:"Falta rejunte"
-    },
-    colors:{
-      E:"#16a34a",
-      I:"#2563eb",
-      F:"#dc2626",
-      C:"#f59e0b",
-      "P.U":"#ea580c",
-      S:"#64748b",
-      CE:"#7c3aed",
-      R:"#b91c1c"
-    }
+  esquadrias:{ ok:["E"],warn:["I","F","C","P.U","S","CE","R"],na:[], labels:{E:"Instalada",I:"Pronto p/ instalar",F:"Falta rejunte/fachada",C:"Falta contramarco","P.U":"P.U incompleto",S:"Contramarco sujo",CE:"Falta cerâmica/gesso",R:"Falta rejunte"}, colors:{E:"#16a34a",I:"#2563eb",F:"#dc2626",C:"#f59e0b","P.U":"#ea580c",S:"#64748b",CE:"#7c3aed",R:"#b91c1c"} },
+  portas:{
+    ok:["OK"], warn:["SMA","M","A","NI","F","FO"], na:["NV"],
+    labels:{ OK:"Completa",SMA:"Sem maçaneta/alisar",M:"Sem maçaneta",A:"Sem alisar",NI:"Não instalada",F:"Furto",FO:"Falta folha",NV:"N/V" },
+    colors:{ OK:"#16a34a",SMA:"#f59e0b",M:"#ea580c",A:"#2563eb",NI:"#dc2626",F:"#b91c1c",FO:"#7c3aed",NV:"#94a3b8" }
+  },
+  guardacorpos:{
+    ok:["OK"], warn:["NI","C","CM","CP","PC","GV","GA","S"], na:["NV"],
+    labels:{ OK:"Aplicado",NI:"Chapim não inst.",C:"Só chapim",CM:"Chapim marcado",CP:"Chapim perfurado",PC:"Pontaletes chumbados",GV:"Sem vidros",GA:"Arranhado",S:"Sujo",NV:"N/V" },
+    colors:{ OK:"#16a34a",NI:"#dc2626",C:"#f59e0b",CM:"#ea580c",CP:"#2563eb",PC:"#0891b2",GV:"#7c3aed",GA:"#b91c1c",S:"#64748b",NV:"#94a3b8" }
+  },
+  forros:{
+    ok:["OK"], warn:["NI","F","FE","VA","PD","IN"], na:["NV"],
+    labels:{ OK:"Aplicado",NI:"Não instalado",F:"Com defeito",FE:"Falta ponto elétrico",VA:"Vazamento",PD:"Ponto deslocado",IN:"Incompleto",NV:"N/V" },
+    colors:{ OK:"#16a34a",NI:"#dc2626",F:"#b91c1c",FE:"#ea580c",VA:"#7c3aed",PD:"#f59e0b",IN:"#2563eb",NV:"#94a3b8" }
   },
 };
 
@@ -659,27 +879,12 @@ function calcTipo(rows, tipo){
 
 function calcEsquadrias(rows){
   const esqRows = rows.filter(r => r.tipo === "esquadrias");
-  const counts = {};
-  const byTorre = {};
-
+  const counts = {}, byTorre = {};
   esqRows.forEach(r => {
-    const s = r.status || "?";
-    counts[s] = (counts[s]||0) + 1;
-    const t = r.torre || "?";
-    if(!byTorre[t]) byTorre[t] = { torre:t, counts:{} };
-    byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
+    const s = r.status || "?"; counts[s] = (counts[s]||0) + 1;
+    const t = r.torre || "?"; if(!byTorre[t]) byTorre[t] = { torre:t, counts:{} }; byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
   });
-
-  const esqInst  = counts["E"] || 0;
-  const esqTotal = Object.values(counts).reduce((a,b) => a+b, 0);
-
-  return {
-    counts,
-    byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
-    byApto: [],
-    esqInst,
-    esqTotal,
-  };
+  return { counts, byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)), byApto:[], esqInst:counts["E"]||0, esqTotal:Object.values(counts).reduce((a,b)=>a+b,0) };
 }
 
 function calcFvs(rows, servico){
@@ -715,8 +920,7 @@ function calcVaranda(rows){
   filtered.forEach(r => {
     const t = r.torre || "?";
     if(!byTorre[t]) byTorre[t] = { torre:t, S:0, C:0, N:0, R:0, total:0 };
-    byTorre[t][r.status] = (byTorre[t][r.status]||0) + 1;
-    byTorre[t].total++;
+    byTorre[t][r.status] = (byTorre[t][r.status]||0) + 1; byTorre[t].total++;
   });
   const torreTable = Object.values(byTorre).map(x => ({ ...x, executado:x.S+x.C, pendente:x.N+x.R, pct:x.total?Math.round((x.S+x.C)/x.total*100):0 })).sort((a,b) => a.torre.localeCompare(b.torre));
   const byApto = {};
@@ -736,7 +940,7 @@ function BarChart({ counts, labels, colors }){
         const color = colors?.[k] || PALETTE[idx % PALETTE.length];
         return (
           <div key={k} style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:160,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{labels[k]}</div>
+            <div style={{width:180,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{labels[k]}</div>
             <div style={{flex:1,background:"#0f172a",borderRadius:4,height:24,position:"relative"}}>
               <div style={{width:`${(v/maxVal)*100}%`,background:color,height:"100%",borderRadius:4,transition:"width .4s"}}/>
               <span style={{position:"absolute",right:8,top:4,fontSize:11,color:C.white,fontWeight:"bold"}}>{v} ({Math.round(v/total*100)}%)</span>
@@ -882,9 +1086,9 @@ function TabelaVarandaApto({ aptoTable }){
 }
 
 function exportCSV(allRows, fvsRows, varandaRows, somCavoRows){
-  const lines = ["tipo,servico,torre,apto,pav,ambiente,criterio,resultado,status,pedras,fonte"];
+  const lines = ["tipo,servico,tipoForro,torre,apto,pav,ambiente,criterio,resultado,status,pedras,fonte"];
   [...allRows, ...fvsRows, ...varandaRows, ...somCavoRows].forEach(r => lines.push(
-    `${r.tipo_doc||r.tipo||""},${r.servico||""},${r.torre||""},${r.apto||""},${r.pav||""},${r.ambiente||""},${r.criterio||""},${r.resultado||""},${r.status||""},${r.pedras??""},${r.fonte||""}`
+    `${r.tipo_doc||r.tipo||""},${r.servico||""},${r.tipoForro||""},${r.torre||""},${r.apto||""},${r.pav||""},${r.ambiente||""},${r.criterio||""},${r.resultado||""},${r.status||""},${r.pedras??""},${r.fonte||""}`
   ));
   const blob = new Blob([lines.join("\n")], { type:"text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -909,6 +1113,7 @@ export default function App(){
   const [fvsTorreFilter, setFvsTorreFilter]             = useState("TODAS");
   const [varandaTorreFilter, setVarandaTorreFilter]     = useState("TODAS");
   const [somCavoTorreFilter, setSomCavoTorreFilter]     = useState("TODAS");
+  const [forroTipoFilter, setForroTipoFilter]           = useState("todos");
 
   const handleFile = useCallback(async e => {
     const files = Array.from(e.target.files || []);
@@ -927,7 +1132,6 @@ export default function App(){
           const sc = parsed.filter(r => r.tipo_doc === "somcavo");
           const va = parsed.filter(r => r.tipo_doc === "varanda");
           const pl = parsed.filter(r => r.tipo_doc !== "somcavo" && r.tipo_doc !== "varanda");
-          // CORREÇÃO BUG 1: extrai o summary embutido pelo parseSomCavo e acumula em scSummary
           if(sc.length && parsed._summary){
             Object.entries(parsed._summary).forEach(([torre, vals]) => {
               if(!scSummary[torre]) scSummary[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 };
@@ -947,7 +1151,6 @@ export default function App(){
             const sc = parsed.filter(r => r.tipo_doc === "somcavo");
             const va = parsed.filter(r => r.tipo_doc === "varanda");
             const pl = parsed.filter(r => r.tipo_doc !== "somcavo" && r.tipo_doc !== "varanda");
-            // CORREÇÃO BUG 1: mesmo para XLSX
             if(sc.length && parsed._summary){
               Object.entries(parsed._summary).forEach(([torre, vals]) => {
                 if(!scSummary[torre]) scSummary[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 };
@@ -989,17 +1192,21 @@ export default function App(){
 
     setAllRows(planilhas); setFvsRows(fvs); setVarandaRows(varanda);
     setSomCavoRows(somcavo); setSomCavoSummary(scSummary); setErrors(errs);
-    setStatus(`${files.length} arquivo(s) processado(s). ${planilhas.length} planilha + ${fvs.length} FVS + ${varanda.length} varanda + ${somcavo.length} som cavo.`);
+    const total = planilhas.length + fvs.length + varanda.length + somcavo.length;
+    setStatus(`${files.length} arquivo(s). ${planilhas.length} registros planilha + ${fvs.length} FVS + ${varanda.length} varanda + ${somcavo.length} som cavo. Total: ${total}`);
     if(fvs.length > 0 && planilhas.length === 0) setMainTab("fvs");
     else if(planilhas.length > 0 || varanda.length > 0 || somcavo.length > 0) setMainTab("planilhas");
   }, []);
 
   const torres = useMemo(() => ["TODAS", ...[...new Set(allRows.map(r => r.torre).filter(Boolean))].sort()], [allRows]);
   const scoped = useMemo(() => torreFilter === "TODAS" ? allRows : allRows.filter(r => r.torre === torreFilter), [allRows, torreFilter]);
-  const shaftData  = useMemo(() => calcTipo(scoped, "shaft"),      [scoped]);
-  const capData    = useMemo(() => calcTipo(scoped, "capiacos"),   [scoped]);
-  const passData   = useMemo(() => calcTipo(scoped, "passantes"),  [scoped]);
-  const esqData    = useMemo(() => calcEsquadrias(scoped),         [scoped]);
+  const shaftData    = useMemo(() => calcTipo(scoped, "shaft"),      [scoped]);
+  const capData      = useMemo(() => calcTipo(scoped, "capiacos"),   [scoped]);
+  const passData     = useMemo(() => calcTipo(scoped, "passantes"),  [scoped]);
+  const esqData      = useMemo(() => calcEsquadrias(scoped),         [scoped]);
+  const portasData   = useMemo(() => calcPortas(scoped),             [scoped]);
+  const guardaData   = useMemo(() => calcGuardaCorpos(scoped),       [scoped]);
+  const forrosData   = useMemo(() => calcForros(scoped, forroTipoFilter), [scoped, forroTipoFilter]);
 
   const shaftTotal  = Object.values(shaftData.counts).reduce((a,b) => a+b, 0) - (shaftData.counts["N/A"]||0);
   const shaftAberto = shaftData.counts["A"] || 0;
@@ -1008,7 +1215,13 @@ export default function App(){
   const passTotal   = Object.values(passData.counts).reduce((a,b) => a+b, 0);
   const passProb    = passTotal - (passData.counts["OK"]||0) - (passData.counts["N/V"]||0);
   const esqInst     = esqData.esqInst  ?? (esqData.counts["E"] || 0);
-  const esqTotal    = esqData.esqTotal ?? Object.values(esqData.counts).reduce((a,b) => a+b, 0);
+  const esqTotal    = esqData.esqTotal ?? Object.values(esqData.counts).reduce((a,b) => a+b,0);
+  const portasOk    = portasData.ok;
+  const portasTotal = portasData.total;
+  const guardaOk    = guardaData.ok;
+  const guardaTotal = guardaData.total;
+  const forrosOk    = forrosData.ok;
+  const forrosTotal = forrosData.total;
 
   const fvsServicos   = ["ceramica","contrapiso","porta","esquadria_alum"];
   const fvsTorres     = useMemo(() => ["TODAS", ...[...new Set(fvsRows.map(r => r.torre).filter(Boolean))].sort()], [fvsRows]);
@@ -1025,12 +1238,15 @@ export default function App(){
 
   const MAIN_TABS = [{ id:"planilhas", label:"📊 Planilhas" }, { id:"fvs", label:"📋 FVS" }];
   const PLAN_TABS = [
-    { id:"shafts",    label:"🔲 Shafts" },
-    { id:"capiacos",  label:"🏗 Capiaços" },
-    { id:"passantes", label:"🔧 Passantes" },
-    { id:"esquadrias",label:"🪟 Esquadrias" },
-    { id:"varanda",   label:"🟫 Cerâmica Varanda" },
-    { id:"somcavo",   label:"🔊 Som Cavo" },
+    { id:"shafts",       label:"🔲 Shafts" },
+    { id:"capiacos",     label:"🏗 Capiaços" },
+    { id:"passantes",    label:"🔧 Passantes" },
+    { id:"esquadrias",   label:"🪟 Esquadrias" },
+    { id:"portas",       label:"🚪 Portas" },
+    { id:"guardacorpos", label:"🛡 Guarda-Corpos" },
+    { id:"forros",       label:"🔲 Forros" },
+    { id:"varanda",      label:"🟫 Cer. Varanda" },
+    { id:"somcavo",      label:"🔊 Som Cavo" },
   ];
   const selStyle = { background:"#0f172a", color:C.white, border:`1px solid ${C.border}`, borderRadius:7, padding:"7px 11px", fontSize:12 };
   const tL = t => t === "TODAS" ? "Todas as torres" : `Torre ${t}`;
@@ -1040,10 +1256,10 @@ export default function App(){
       <div style={{maxWidth:1280,margin:"0 auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{background:"#082f49",color:C.accent,borderRadius:999,padding:"3px 12px",fontSize:12,fontWeight:"bold"}}>FVS Qualidade</span>
-          <span style={{color:C.muted,fontSize:12}}>v4.7</span>
+          <span style={{color:C.muted,fontSize:12}}>v5.0</span>
         </div>
         <h1 style={{fontSize:32,margin:"0 0 4px",color:C.white}}>Dashboard de Verificação de Serviços</h1>
-        <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Cerâmica Varanda · Som Cavo · Contrapiso · Portas</p>
+        <p style={{color:C.muted,margin:"0 0 22px",fontSize:13}}>Shafts · Capiaços · Passantes · Esquadrias · Portas · Guarda-Corpos · Forros · Cerâmica Varanda · Som Cavo · Contrapiso</p>
 
         <div style={{background:C.card,borderRadius:18,padding:20,marginBottom:20,border:`1px solid ${C.border}`}}>
           <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
@@ -1079,18 +1295,21 @@ export default function App(){
           <div>
             {(allRows.length > 0 || varandaRows.length > 0 || somCavoRows.length > 0) ? (
               <div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(155px,1fr))",gap:14,marginTop:20,marginBottom:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginTop:20,marginBottom:20}}>
                   <KPI label="Shafts Abertos"       value={`${shaftAberto}/${shaftTotal}`} sub={`${shaftTotal?Math.round(shaftAberto/shaftTotal*100):0}%`} color={C.ok}/>
-                  <KPI label="Capiaços c/ Problema" value={capProb}  sub={`de ${capTotal}`} color={capProb>0?C.bad:C.ok}/>
+                  <KPI label="Capiaços c/ Prob."    value={capProb}  sub={`de ${capTotal}`} color={capProb>0?C.bad:C.ok}/>
                   <KPI label="Passantes c/ Prob."   value={passProb} sub={`de ${passTotal}`} color={passProb>0?C.bad:C.ok}/>
                   <KPI label="Esquadrias Inst."     value={`${esqInst}/${esqTotal}`} sub={`${esqTotal?Math.round(esqInst/esqTotal*100):0}%`} color={C.blue}/>
+                  <KPI label="Portas Completas"     value={`${portasOk}/${portasTotal}`} sub={`${portasTotal?Math.round(portasOk/portasTotal*100):0}%`} color={portasOk===portasTotal&&portasTotal>0?C.ok:C.orange}/>
+                  <KPI label="Guarda-Corpos OK"     value={`${guardaOk}/${guardaTotal}`} sub={`${guardaTotal?Math.round(guardaOk/guardaTotal*100):0}%`} color={C.purple}/>
+                  <KPI label="Forros OK"            value={`${forrosOk}/${forrosTotal}`} sub={`${forrosTotal?Math.round(forrosOk/forrosTotal*100):0}%`} color={C.blue}/>
                   <KPI label="Varanda c/ Cerâmica"  value={`${varandaData.exec}/${varandaData.total}`} sub={`${varandaData.pctGeral}%`} color={varandaData.pctGeral>=80?C.ok:C.warn}/>
                   <KPI label="Som Cavo"             value={`${somCavoData.pctGeralPedras}%`} sub={`${somCavoData.totalPedrasReprov} pedras reprov.`} color={C.bad}/>
                 </div>
 
-                <div style={{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`,flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:2,borderBottom:`1px solid ${C.border}`,flexWrap:"wrap"}}>
                   {PLAN_TABS.map(t => (
-                    <button key={t.id} onClick={() => setPlanTab(t.id)} style={{background:planTab===t.id?C.blue:"transparent",color:planTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"9px 16px",cursor:"pointer",fontWeight:planTab===t.id?"bold":"normal",fontSize:13}}>
+                    <button key={t.id} onClick={() => setPlanTab(t.id)} style={{background:planTab===t.id?C.blue:"transparent",color:planTab===t.id?C.white:C.muted,border:"none",borderRadius:"8px 8px 0 0",padding:"8px 13px",cursor:"pointer",fontWeight:planTab===t.id?"bold":"normal",fontSize:12}}>
                       {t.label}
                     </button>
                   ))}
@@ -1118,6 +1337,72 @@ export default function App(){
                   <Box title={`Distribuição — Esquadrias — ${tL(torreFilter)}`}><BarChart counts={esqData.counts} labels={CLASS.esquadrias.labels} colors={CLASS.esquadrias.colors}/></Box>
                   <Box title="Por Torre — Esquadrias"><TabelaTorre data={esqData}/></Box>
                   {esqData.byApto.length > 0 && <Box title={`Por Apartamento — Esquadrias — ${tL(torreFilter)}`}><TabelaApto data={esqData}/></Box>}
+                </div>}
+
+                {/* ─── PORTAS DE MADEIRA ─── */}
+                {planTab === "portas" && <div>
+                  <Box title={`Distribuição — Portas de Madeira — ${tL(torreFilter)}`}>
+                    <BarChart counts={portasData.counts} labels={CLASS.portas.labels} colors={CLASS.portas.colors}/>
+                  </Box>
+                  <Box title="Por Torre — Portas de Madeira"><TabelaTorre data={portasData}/></Box>
+                  {portasData.byApto.length > 0 && <Box title={`Por Apartamento — Portas de Madeira — ${tL(torreFilter)}`}><TabelaApto data={portasData}/></Box>}
+                  {portasData.byApto.length === 0 && portasData.total > 0 && (
+                    <Box title="Resumo por status">
+                      <p style={{color:C.muted,fontSize:13}}>Dados carregados via resumo de legenda (sem detalhe por apto disponível neste arquivo).</p>
+                    </Box>
+                  )}
+                </div>}
+
+                {/* ─── GUARDA-CORPOS E GRADIL ─── */}
+                {planTab === "guardacorpos" && <div>
+                  <Box title={`Distribuição — Guarda-Corpos e Gradil — ${tL(torreFilter)}`}>
+                    <BarChart counts={guardaData.counts} labels={CLASS.guardacorpos.labels} colors={CLASS.guardacorpos.colors}/>
+                  </Box>
+                  <Box title="Por Torre — Guarda-Corpos e Gradil"><TabelaTorre data={guardaData}/></Box>
+                  {guardaData.byApto.length > 0 && <Box title={`Por Apartamento — Guarda-Corpos e Gradil — ${tL(torreFilter)}`}><TabelaApto data={guardaData}/></Box>}
+                  {guardaData.byApto.length === 0 && guardaData.total > 0 && (
+                    <Box title="Resumo por status">
+                      <p style={{color:C.muted,fontSize:13}}>Dados carregados via resumo de legenda (sem detalhe por apto disponível neste arquivo).</p>
+                    </Box>
+                  )}
+                </div>}
+
+                {/* ─── FORROS ─── */}
+                {planTab === "forros" && <div>
+                  <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8,marginTop:16,marginBottom:4}}>
+                    <span style={{fontSize:11,color:C.muted}}>TIPO</span>
+                    <select value={forroTipoFilter} onChange={e => setForroTipoFilter(e.target.value)} style={selStyle}>
+                      <option value="todos">Todos os forros</option>
+                      <option value="acartonado">Forro Acartonado</option>
+                      <option value="gesso">Forro de Gesso</option>
+                    </select>
+                  </div>
+                  <Box title={`Distribuição — Forros (${forroTipoFilter === "todos" ? "Acartonado + Gesso" : forroTipoFilter === "acartonado" ? "Acartonado" : "Gesso"}) — ${tL(torreFilter)}`}>
+                    <BarChart counts={forrosData.counts} labels={CLASS.forros.labels} colors={CLASS.forros.colors}/>
+                  </Box>
+                  <Box title="Por Torre — Forros"><TabelaTorre data={forrosData}/></Box>
+                  {forrosData.byApto.length > 0 && (
+                    <Box title={`Por Apartamento — Forros — ${tL(torreFilter)}`}>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+                          <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Tipo Forro"/><TH c="Total"/><TH c="Problemas"/><TH c="% Prob."/><TH c="Status encontrados"/></tr></thead>
+                          <tbody>{forrosData.byApto.map((r,i) => (
+                            <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
+                              <TD c={r.torre} color={C.accent} bold/><TD c={r.apto} bold/><TD c={r.pav}/>
+                              <TD c={r.tipoForro === "acartonado" ? "Acartonado" : "Gesso"} color={C.muted}/>
+                              <TD c={r.total}/>
+                              <TD c={r.prob} color={r.prob>0?C.bad:C.ok}/><TD c={r.pct}/><TD c={r.statuses||"—"} color={r.statuses?C.warn:C.muted}/>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
+                    </Box>
+                  )}
+                  {forrosData.byApto.length === 0 && forrosData.total > 0 && (
+                    <Box title="Resumo por status">
+                      <p style={{color:C.muted,fontSize:13}}>Dados carregados via resumo de legenda (sem detalhe por apto disponível neste arquivo).</p>
+                    </Box>
+                  )}
                 </div>}
 
                 {planTab === "varanda" && <div>
