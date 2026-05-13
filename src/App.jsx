@@ -407,12 +407,22 @@ function parseGuardaCorpos(rows, fileName){
   for(const hi of hIdxs){
     const hRow = rows[hi];
     const blocos = [];
+    // Detecta cada bloco APTO-TORRE dentro da linha
     hRow.forEach((cell, ci) => {
       if(!/^apto$/i.test(san(cell))) return;
       for(let ti = ci+1; ti <= ci+2 && ti < hRow.length; ti++){
         if(/^torre$/i.test(san(hRow[ti]))){
-          const headers = hRow.slice(ti+1).map(h => san(fix(h))).filter(Boolean);
-          blocos.push({ aptoCol:ci, torreCol:ti, ambStart:ti+1, headers });
+          const ambStart = ti+1;
+          // Fim do bloco = próximo APTO ou fim da linha
+          let ambEnd = hRow.length;
+          for(let x = ambStart; x < hRow.length; x++){
+            if(/^apto$/i.test(san(hRow[x]))){ ambEnd = x; break; }
+          }
+          const headers = hRow.slice(ambStart, ambEnd).map(h => san(fix(h)));
+          // só guarda headers não-vazios e mapeia índice real
+          const headerMap = [];
+          headers.forEach((h, j) => { if(h) headerMap.push({ amb:h, col:ambStart+j }); });
+          blocos.push({ aptoCol:ci, torreCol:ti, headerMap });
           break;
         }
       }
@@ -423,10 +433,9 @@ function parseGuardaCorpos(rows, fileName){
       for(const b of blocos){
         const a = san(r[b.aptoCol]), t = san(r[b.torreCol]).toUpperCase();
         if(!a || !isApto(a) || !t || !isTorre(t)) continue;
-        b.headers.forEach((amb, j) => {
-          const val = san(r[b.ambStart+j]).toUpperCase();
+        b.headerMap.forEach(({ amb, col }) => {
+          const val = san(r[col]).toUpperCase();
           if(!val || val === "-" || !GUARDACORPO_STATUS_VALID.has(val)) return;
-          if(val === "-") return;
           result.push({ tipo:"guardacorpos", torre:t, apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
         });
       }
@@ -436,33 +445,82 @@ function parseGuardaCorpos(rows, fileName){
 }
 
 function calcGuardaCorpos(rows){
-  const filtered = rows.filter(r => r.tipo === "guardacorpos");
+  const PROB = new Set(["NI","C","CM","CP","PC","GV","GA","S"]);
+  const NA   = new Set(["-","NV"]);
+  const filtered = rows.filter(r => r.tipo === "guardacorpos" && !NA.has(r.status));
+
+  // ── contagens globais (excluindo NA/NV/-)
   const counts = {};
-  const byTorre = {};
+  filtered.forEach(r => { const s = r.status||"?"; counts[s]=(counts[s]||0)+1; });
+
+  // ── por torre: progresso OK vs pendente
+  const byTorreMap = {};
   filtered.forEach(r => {
-    const s = r.status || "?";
-    counts[s] = (counts[s]||0) + 1;
-    const t = r.torre || "?";
-    if(!byTorre[t]) byTorre[t] = { torre:t, counts:{} };
-    byTorre[t].counts[s] = (byTorre[t].counts[s]||0) + 1;
+    const t = r.torre||"?";
+    if(!byTorreMap[t]) byTorreMap[t] = { torre:t, counts:{}, ok:0, prob:0, total:0 };
+    const s = r.status||"?";
+    byTorreMap[t].counts[s] = (byTorreMap[t].counts[s]||0)+1;
+    byTorreMap[t].total++;
+    if(s==="OK") byTorreMap[t].ok++;
+    else if(PROB.has(s)) byTorreMap[t].prob++;
   });
-  const byApto = {};
+  const byTorre = Object.values(byTorreMap)
+    .map(x => ({ ...x, pct: x.total ? Math.round(x.ok/x.total*100) : 0 }))
+    .sort((a,b) => a.torre.localeCompare(b.torre));
+
+  // ── pareto por ambiente: quais ambientes concentram mais problemas
+  const byAmbMap = {};
+  filtered.forEach(r => {
+    const amb = r.ambiente||"(sem ambiente)";
+    if(!byAmbMap[amb]) byAmbMap[amb] = { ambiente:amb, ok:0, prob:0, total:0, statuses:{} };
+    byAmbMap[amb].total++;
+    if(r.status==="OK") byAmbMap[amb].ok++;
+    else if(PROB.has(r.status)){
+      byAmbMap[amb].prob++;
+      byAmbMap[amb].statuses[r.status] = (byAmbMap[amb].statuses[r.status]||0)+1;
+    }
+  });
+  const byAmbiente = Object.values(byAmbMap)
+    .map(x => ({ ...x, pct: x.total ? Math.round(x.ok/x.total*100) : 0,
+      topStatus: Object.entries(x.statuses).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`${s}(${n})`).join(" ") }))
+    .sort((a,b) => b.prob - a.prob);
+
+  // ── por apto detalhado
+  const byAptoMap = {};
   filtered.forEach(r => {
     if(!r.apto) return;
     const key = `${r.torre}-${r.apto}`;
-    if(!byApto[key]) byApto[key] = { torre:r.torre, apto:r.apto, pav:r.pav, total:0, prob:0, statuses:new Set() };
-    byApto[key].total++;
-    const PROB_STATUS = new Set(["NI","C","CM","CP","PC","GV","GA","S"]);
-    if(PROB_STATUS.has(r.status)){ byApto[key].prob++; byApto[key].statuses.add(r.status); }
+    if(!byAptoMap[key]) byAptoMap[key] = { torre:r.torre, apto:r.apto, pav:r.pav, total:0, ok:0, prob:0, statuses:new Set(), ambProb:new Set() };
+    byAptoMap[key].total++;
+    if(r.status==="OK") byAptoMap[key].ok++;
+    else if(PROB.has(r.status)){ byAptoMap[key].prob++; byAptoMap[key].statuses.add(r.status); byAptoMap[key].ambProb.add(r.ambiente); }
   });
+  const byApto = Object.values(byAptoMap)
+    .map(x => ({ ...x,
+      pct: x.total ? Math.round(x.ok/x.total*100) : 0,
+      statuses:[...x.statuses].join(", "),
+      ambProb:[...x.ambProb].join(", ")
+    }))
+    .sort((a,b) => a.torre.localeCompare(b.torre) || Number(String(a.apto).match(/\d+/)?.[0]||0)-Number(String(b.apto).match(/\d+/)?.[0]||0));
+
+  // ── heatmap: apto × ambiente (só pendentes)
+  const heatmap = {};
+  filtered.forEach(r => {
+    if(!r.apto || !r.ambiente) return;
+    const key = `${r.torre}-${r.apto}`;
+    if(!heatmap[key]) heatmap[key] = { torre:r.torre, apto:r.apto, pav:r.pav, ambientes:{} };
+    heatmap[key].ambientes[r.ambiente] = r.status;
+  });
+
+  const totalOk   = filtered.filter(r=>r.status==="OK").length;
+  const totalProb = filtered.filter(r=>PROB.has(r.status)).length;
+  const totalGeral= filtered.length;
+
   return {
-    counts,
-    byTorre: Object.values(byTorre).sort((a,b) => a.torre.localeCompare(b.torre)),
-    byApto: Object.values(byApto).map(x => ({
-      ...x, verificacoes:x.total,
-      pct:`${x.total?Math.round(x.prob/x.total*100):0}%`,
-      statuses:[...x.statuses].join(", ")
-    })).sort((a,b) => a.torre.localeCompare(b.torre) || Number(String(a.apto).match(/\d+/)?.[0]||0) - Number(String(b.apto).match(/\d+/)?.[0]||0)),
+    counts, byTorre, byAmbiente, byApto,
+    heatmap: Object.values(heatmap).sort((a,b)=>a.torre.localeCompare(b.torre)||Number(String(a.apto).match(/\d+/)?.[0]||0)-Number(String(b.apto).match(/\d+/)?.[0]||0)),
+    totalOk, totalProb, totalGeral,
+    pctGeral: totalGeral ? Math.round(totalOk/totalGeral*100) : 0,
     total: Object.values(counts).reduce((a,b)=>a+b,0),
     ok: counts["OK"]||0,
   };
@@ -1365,15 +1423,140 @@ export default function App(){
 
                 {/* ─── GUARDA-CORPOS E GRADIL ─── */}
                 {planTab === "guardacorpos" && <div>
-                  <Box title={`Distribuição — Guarda-Corpos e Gradil — ${tL(torreFilter)}`}>
+                  {/* KPIs */}
+                  {guardaData.totalGeral > 0 && (
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginTop:20,marginBottom:4}}>
+                      <KPI label="Aplicados (OK)"   value={guardaData.totalOk}   sub={`${guardaData.pctGeral}% do total`} color={guardaData.pctGeral>=80?C.ok:guardaData.pctGeral>=50?C.warn:C.bad}/>
+                      <KPI label="Pendentes"         value={guardaData.totalProb} sub={`de ${guardaData.totalGeral} elementos`} color={guardaData.totalProb>0?C.bad:C.ok}/>
+                      <KPI label="Torres"            value={guardaData.byTorre.length} sub="com dados carregados" color={C.accent}/>
+                      <KPI label="Ambientes mapeados" value={guardaData.byAmbiente.length} sub="tipos distintos" color={C.purple}/>
+                    </div>
+                  )}
+
+                  {/* Progresso por torre */}
+                  {guardaData.byTorre.length > 0 && (
+                    <Box title={`Progresso por Torre — ${tL(torreFilter)}`}>
+                      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                        {guardaData.byTorre.map((t,i) => (
+                          <div key={i} style={{display:"flex",alignItems:"center",gap:12}}>
+                            <div style={{width:72,fontSize:13,color:C.white,fontWeight:"bold",flexShrink:0}}>Torre {t.torre}</div>
+                            <div style={{flex:1,background:"#0f172a",borderRadius:6,height:28,position:"relative",overflow:"hidden"}}>
+                              <div style={{width:`${t.pct}%`,background:t.pct>=80?C.ok:t.pct>=50?C.warn:C.bad,height:"100%",borderRadius:6,transition:"width .4s"}}/>
+                              <span style={{position:"absolute",right:10,top:5,fontSize:12,color:C.white,fontWeight:"bold"}}>{t.ok}/{t.total} ({t.pct}%)</span>
+                            </div>
+                            <div style={{width:120,fontSize:11,color:C.muted,flexShrink:0}}>
+                              {Object.entries(t.counts).filter(([k])=>k!=="OK").sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(" ")}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Box>
+                  )}
+
+                  {/* Pareto por ambiente */}
+                  {guardaData.byAmbiente.length > 0 && (
+                    <Box title="Pendências por Ambiente (Pareto)">
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        {guardaData.byAmbiente.map((a,i) => {
+                          const maxProb = guardaData.byAmbiente[0]?.prob || 1;
+                          return (
+                            <div key={i} style={{display:"flex",alignItems:"center",gap:10}}>
+                              <div style={{width:160,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{a.ambiente}</div>
+                              <div style={{flex:1,background:"#0f172a",borderRadius:4,height:26,position:"relative"}}>
+                                <div style={{width:`${(a.prob/maxProb)*100}%`,background:a.pct>=80?C.ok:a.pct>=50?C.warn:C.bad,height:"100%",borderRadius:4,transition:"width .4s"}}/>
+                                <span style={{position:"absolute",right:8,top:4,fontSize:11,color:C.white,fontWeight:"bold"}}>
+                                  {a.prob} pend. / {a.total} ({a.pct}% OK){a.topStatus?` — ${a.topStatus}`:""}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </Box>
+                  )}
+
+                  {/* Distribuição geral de status */}
+                  <Box title={`Distribuição de Status — ${tL(torreFilter)}`}>
                     <BarChart counts={guardaData.counts} labels={CLASS.guardacorpos.labels} colors={CLASS.guardacorpos.colors}/>
                   </Box>
-                  <Box title="Por Torre — Guarda-Corpos e Gradil"><TabelaTorre data={guardaData}/></Box>
-                  {guardaData.byApto.length > 0 && <Box title={`Por Apartamento — Guarda-Corpos e Gradil — ${tL(torreFilter)}`}><TabelaApto data={guardaData}/></Box>}
-                  {guardaData.byApto.length === 0 && guardaData.total > 0 && (
-                    <Box title="Resumo por status">
-                      <p style={{color:C.muted,fontSize:13}}>Dados carregados via resumo de legenda (sem detalhe por apto disponível neste arquivo).</p>
+
+                  {/* Heatmap apto × ambiente */}
+                  {guardaData.heatmap.length > 0 && (() => {
+                    const allAmbs = [...new Set(guardaData.heatmap.flatMap(r => Object.keys(r.ambientes)))].sort();
+                    const SC = CLASS.guardacorpos.colors;
+                    const getColor = s => s==="-"||s==="NV"?"#1e293b":s==="OK"?C.ok:SC[s]||C.bad;
+                    return (
+                      <Box title="Mapa de Status — Apto × Ambiente">
+                        <div style={{overflowX:"auto"}}>
+                          <table style={{borderCollapse:"collapse",fontSize:11}}>
+                            <thead>
+                              <tr>
+                                <th style={{padding:"6px 10px",color:C.muted,textAlign:"left",background:C.card,position:"sticky",left:0,zIndex:1}}>Torre</th>
+                                <th style={{padding:"6px 10px",color:C.muted,textAlign:"left",background:C.card,position:"sticky",left:52,zIndex:1}}>Apto</th>
+                                {allAmbs.map(a => <th key={a} style={{padding:"4px 6px",color:C.muted,fontSize:10,textAlign:"center",whiteSpace:"nowrap",transform:"rotate(-30deg)",transformOrigin:"bottom left",height:64,verticalAlign:"bottom"}}>{a}</th>)}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {guardaData.heatmap.map((r,i) => (
+                                <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
+                                  <td style={{padding:"5px 10px",color:C.accent,fontWeight:"bold",fontSize:11,position:"sticky",left:0,background:i%2===0?C.bg:C.card}}>{r.torre}</td>
+                                  <td style={{padding:"5px 10px",color:C.white,fontWeight:"bold",fontSize:11,position:"sticky",left:52,background:i%2===0?C.bg:C.card}}>{r.apto}</td>
+                                  {allAmbs.map(a => {
+                                    const s = r.ambientes[a]||"—";
+                                    return (
+                                      <td key={a} style={{padding:"3px 4px",textAlign:"center"}}>
+                                        <div style={{background:getColor(s),borderRadius:4,padding:"3px 5px",fontSize:10,color:C.white,fontWeight:"bold",minWidth:28,textAlign:"center",opacity:s==="—"?0.15:1}}>
+                                          {s==="—"?"·":s}
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:8}}>
+                          {Object.entries(CLASS.guardacorpos.labels).map(([k,v]) => (
+                            <div key={k} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted}}>
+                              <div style={{width:14,height:14,borderRadius:3,background:CLASS.guardacorpos.colors[k]||C.muted}}/>
+                              <span><b style={{color:C.white}}>{k}</b> — {v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </Box>
+                    );
+                  })()}
+
+                  {/* Tabela por apartamento */}
+                  {guardaData.byApto.length > 0 && (
+                    <Box title={`Por Apartamento — ${tL(torreFilter)}`}>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+                          <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Total"/><TH c="OK"/><TH c="Pend."/><TH c="% OK"/><TH c="Status pendentes"/><TH c="Ambientes pend."/></tr></thead>
+                          <tbody>{guardaData.byApto.map((r,i) => (
+                            <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
+                              <TD c={r.torre} color={C.accent} bold/>
+                              <TD c={r.apto} bold/>
+                              <TD c={r.pav}/>
+                              <TD c={r.total}/>
+                              <TD c={r.ok} color={C.ok}/>
+                              <TD c={r.prob} color={r.prob>0?C.bad:C.ok}/>
+                              <TD bold color={r.pct>=80?C.ok:r.pct>=50?C.warn:C.bad}>{r.pct}%</TD>
+                              <TD c={r.statuses||"—"} color={r.statuses?C.warn:C.muted}/>
+                              <TD c={r.ambProb||"—"} color={r.ambProb?C.orange:C.muted}/>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
                     </Box>
+                  )}
+
+                  {guardaData.totalGeral === 0 && (
+                    <div style={{textAlign:"center",padding:"40px",color:C.muted}}>
+                      <div style={{fontSize:40,marginBottom:12}}>🛡</div>
+                      <div>Carregue o arquivo de mapeamento de guarda-corpos.</div>
+                    </div>
                   )}
                 </div>}
 
