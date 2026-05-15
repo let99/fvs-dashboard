@@ -640,6 +640,8 @@ function calcForros(rows, tipoForro){
 function detectTipo(fileName, rows){
   const head = rows.slice(0,8).flat().join(" ").toLowerCase();
   const fn = fileName.toLowerCase();
+  // Normaliza o nome removendo acentos para comparação robusta
+  const fnNorm = fn.normalize("NFD").replace(/[\u0300-\u036f]/g,"");
   if(/shaft/i.test(fn)) return "shaft";
   if(/capiaç|capiac/i.test(fn)) return "capiacos";
   if(/passante/i.test(fn)) return "passantes";
@@ -647,8 +649,8 @@ function detectTipo(fileName, rows){
   if(/cerâmica.*varanda|varanda.*cerâmica|mapeamento.*varanda/i.test(fn)) return "varanda";
   if(/som.cavo|mapeamento.*fvs.*cer|mapeamento.*cer.*apto/i.test(fn)) return "somcavo";
   if(/porta.*madeira|madeira.*porta/i.test(fn)) return "portas";
+  if(/lajes?\s*[_\s-]*t[eé]c/i.test(fn) || /laje/i.test(fnNorm) && /tec/i.test(fnNorm)) return "lajetecnica";
   if(/guarda.corpo/i.test(fn) && !/laje/i.test(fn)) return "guardacorpo";
-  if(/laje.t[eé]cnica|laje.tecnica/i.test(fn)) return "lajetecnica";
   if(/guarda.corpo|gradil/i.test(fn)) return "guardacorpo";
   if(/forro.*acarton|acarton.*forro/i.test(fn)) return "forro_acartonado";
   if(/forro.*gesso|gesso.*forro/i.test(fn)) return "forro_gesso";
@@ -663,6 +665,7 @@ function detectTipo(fileName, rows){
   if(/verifica.*passante|passante.*verifica/i.test(head)) return "passantes";
   if(/serviço.*esquadria|precedente.*esquadria/i.test(head)) return "esquadrias";
   if(/mapeamento.*porta.*madeira|porta.*madeira/i.test(head)) return "portas";
+  if(/gradil aplicado/i.test(head)) return "lajetecnica";
   if(/guarda.corpo|gradil.*split/i.test(head)) return "guardacorpo";
   if(/forro.*acartonado/i.test(head)) return "forro_acartonado";
   if(/forro.*gesso/i.test(head)) return "forro_gesso";
@@ -890,6 +893,7 @@ function parseFile(fileName, csvText){
       // Tenta inferir pelo conteúdo
       const head = rows.slice(0,8).flat().join(" ");
       if(/porta.*madeira|madeira.*porta/i.test(head)) return parsePortas(rows, fileName);
+      if(/gradil aplicado/i.test(head)) return parseGuardaCorpos(rows, fileName, "lajetecnica");
       if(/laje.t[eé]cnica|laje.tecnica/i.test(head)) return parseGuardaCorpos(rows, fileName, "lajetecnica");
       if(/guarda.corpo|gradil/i.test(head)) return parseGuardaCorpos(rows, fileName, "guardacorpo");
       if(/forro.*acartonado/i.test(head)) return parseForros(rows, fileName, "acartonado");
@@ -1385,7 +1389,8 @@ export default function App(){
                   <KPI label="Passantes c/ Prob."   value={passProb} sub={`de ${passTotal}`} color={passProb>0?C.bad:C.ok}/>
                   <KPI label="Esquadrias Inst."     value={`${esqInst}/${esqTotal}`} sub={`${esqTotal?Math.round(esqInst/esqTotal*100):0}%`} color={C.blue}/>
                   <KPI label="Portas Completas"     value={`${portasOk}/${portasTotal}`} sub={`${portasTotal?Math.round(portasOk/portasTotal*100):0}%`} color={portasOk===portasTotal&&portasTotal>0?C.ok:C.orange}/>
-                  <KPI label="Guarda-Corpos OK"     value={`${guardaOk}/${guardaTotal}`} sub={`${guardaTotal?Math.round(guardaOk/guardaTotal*100):0}%`} color={C.purple}/>
+                  {guardaDataGC.total>0 && <KPI label="Guarda-Corpo OK"   value={`${guardaDataGC.ok}/${guardaDataGC.total}`} sub={`${guardaDataGC.total?Math.round(guardaDataGC.ok/guardaDataGC.total*100):0}%`} color={C.purple}/>}
+                  {guardaDataLT.total>0 && <KPI label="Gradil/Laje OK"    value={`${guardaDataLT.ok}/${guardaDataLT.total}`} sub={`${guardaDataLT.total?Math.round(guardaDataLT.ok/guardaDataLT.total*100):0}%`} color={"#0891b2"}/>}
                   <KPI label="Forros OK"            value={`${forrosOk}/${forrosTotal}`} sub={`${forrosTotal?Math.round(forrosOk/forrosTotal*100):0}%`} color={C.blue}/>
                   <KPI label="Varanda c/ Cerâmica"  value={`${varandaData.exec}/${varandaData.total}`} sub={`${varandaData.pctGeral}%`} color={varandaData.pctGeral>=80?C.ok:C.warn}/>
                   <KPI label="Som Cavo"             value={`${somCavoData.pctGeralPedras}%`} sub={`${somCavoData.totalPedrasReprov} pedras reprov.`} color={C.bad}/>
