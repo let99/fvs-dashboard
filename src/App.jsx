@@ -537,40 +537,16 @@ const GRANITO_STATUS_MAP = {
 
 function parseGranito(rows, fileName, tipoGranito){
   const result = [];
-
-  // ── Extrai totais por torre da linha TOTAL DE ELEMENTOS da legenda ────────
   const totaisTorre = {};
-  const legendHeadIdx = rows.findIndex(r => {
-    const flat = r.join(" ");
-    return /TORRE [AB]/i.test(flat) && r.some(c => /^LEGENDA$/i.test(san(c)));
-  });
-  if(legendHeadIdx !== -1){
-    const headRow = rows[legendHeadIdx];
-    const torreCols = [];
-    headRow.forEach((cell, ci) => {
-      const m = san(fix(cell)).match(/^TORRE ([A-D])$/i);
-      if(m) torreCols.push({ torre: m[1].toUpperCase(), col: ci });
-    });
-    // Procura linha TOTAL DE ELEMENTOS
-    for(let i = legendHeadIdx+1; i < Math.min(legendHeadIdx+20, rows.length); i++){
-      if(/TOTAL\s+DE\s+ELEMENTOS/i.test(rows[i].join(" "))){
-        torreCols.forEach(({ torre, col }) => {
-          for(let x = col; x < col+5 && x < rows[i].length; x++){
-            const n = parseInt(san(rows[i][x]));
-            if(!isNaN(n) && n > 0){ totaisTorre[torre] = n; break; }
-          }
-        });
-        break;
-      }
-    }
-  }
 
-  // ── Parser linha a linha por apto/ambiente ─────────────────────────────
+  // ── Encontra todos os blocos APTO/TORRE ───────────────────────────────────
   const hIdxs = rows.reduce((acc, r, i) => {
     if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i);
     return acc;
   }, []);
-  for(const hi of hIdxs){
+
+  for(let hh = 0; hh < hIdxs.length; hh++){
+    const hi = hIdxs[hh];
     const hRow = rows[hi];
     const blocos = [];
     hRow.forEach((cell, ci) => {
@@ -587,13 +563,16 @@ function parseGranito(rows, fileName, tipoGranito){
             const label = san(fix(h));
             if(label) headerMap.push({ amb:label, col:ambStart+j });
           });
-          blocos.push({ aptoCol:ci, torreCol:ti, headerMap });
+          blocos.push({ aptoCol:ci, torreCol:ti, ambStart, ambEnd, headerMap });
           break;
         }
       }
     });
     if(!blocos.length) continue;
-    for(let i = hi+1; i < rows.length; i++){
+
+    // ── Lê dados por apto ────────────────────────────────────────────────
+    const nextHi = hIdxs[hh+1] ?? rows.length;
+    for(let i = hi+1; i < nextHi; i++){
       const r = rows[i];
       for(const b of blocos){
         const a = san(r[b.aptoCol]), t = san(r[b.torreCol]).toUpperCase();
@@ -604,6 +583,40 @@ function parseGranito(rows, fileName, tipoGranito){
           result.push({ tipo:"granito", tipoGranito, torre:t, apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
         });
       }
+    }
+
+    // ── Lê TOTAL PREVISTO da seção de resumo abaixo do bloco ─────────────
+    for(let i = hi+1; i < Math.min(nextHi + 10, rows.length); i++){
+      if(!/TOTAL\s+PREVISTO/i.test(rows[i].join(" "))) continue;
+      blocos.forEach(b => {
+        let torre = "?";
+        for(let j = hi+1; j < Math.min(hi+5, rows.length); j++){
+          const t = san(rows[j][b.torreCol]).toUpperCase();
+          if(/^[A-D]$/.test(t)){ torre = t; break; }
+        }
+        if(torre === "?") return;
+        const r = rows[i];
+        // Busca a coluna do total geral do bloco: procura de direita para esquerda
+        // dentro da janela [ambStart .. ambEnd+2], pegando o último número válido
+        // que seja >= soma dos ambientes individuais (ou seja, o total cumulativo)
+        // Coluna do total geral fica logo após o último ambiente do bloco
+        const ambientes = b.headerMap.length;
+        // Posição de resultado = coluna após os ambientes (ambEnd ou ambEnd+1)
+        // Busca da direita: a primeira célula numérica > 0 após ambEnd-1
+        let found = false;
+        for(let x = b.ambStart + ambientes; x <= b.ambStart + ambientes + 3 && x < r.length; x++){
+          const n = parseInt(san(r[x]));
+          if(!isNaN(n) && n > 0){ totaisTorre[torre] = n; found = true; break; }
+        }
+        // Se não achou à direita, pega a última coluna numérica dentro do bloco
+        if(!found){
+          for(let x = b.ambStart + ambientes - 1; x >= b.ambStart; x--){
+            const n = parseInt(san(r[x]));
+            if(!isNaN(n) && n > 0){ totaisTorre[torre] = n; break; }
+          }
+        }
+      });
+      break;
     }
   }
 
