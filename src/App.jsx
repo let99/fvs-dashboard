@@ -363,7 +363,9 @@ function calcPortas(rows){
 // ─── GUARDA-CORPOS E GRADIL ───────────────────────────────────────────────
 const GUARDACORPO_STATUS_VALID = new Set(["OK","NI","C","CM","CP","PC","GV","GA","S","NV","-"]);
 
-function parseGuardaCorpos(rows, fileName){
+function parseGuardaCorpos(rows, fileName, tipoGC){
+  // tipoGC: "guardacorpo" | "lajetecnica"
+  const tipo = tipoGC || "guardacorpo";
   const result = [];
   // Summary do bloco de legenda
   const legendIdx = rows.findIndex(r => {
@@ -390,7 +392,7 @@ function parseGuardaCorpos(rows, fileName){
           for(let x = col; x < Math.min(col+3, nextCol); x++){
             const n = parseInt(san(r[x]));
             if(!isNaN(n) && n >= 0){
-              for(let k = 0; k < n; k++) result.push({ tipo:"guardacorpos", torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
+              for(let k = 0; k < n; k++) result.push({ tipo, tipoGC:tipo, torre, apto:"", pav:"", ambiente:"", status, fonte:fileName });
               break;
             }
           }
@@ -436,7 +438,7 @@ function parseGuardaCorpos(rows, fileName){
         b.headerMap.forEach(({ amb, col }) => {
           const val = san(r[col]).toUpperCase();
           if(!val || val === "-" || !GUARDACORPO_STATUS_VALID.has(val)) return;
-          result.push({ tipo:"guardacorpos", torre:t, apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
+          result.push({ tipo, tipoGC:tipo, torre:t, apto:a, pav:pav(a), ambiente:fix(amb), status:val, fonte:fileName });
         });
       }
     }
@@ -444,10 +446,10 @@ function parseGuardaCorpos(rows, fileName){
   return result;
 }
 
-function calcGuardaCorpos(rows){
+function calcGuardaCorpos(rows, tipoGC){
   const PROB = new Set(["NI","C","CM","CP","PC","GV","GA","S"]);
   const NA   = new Set(["-","NV"]);
-  const filtered = rows.filter(r => r.tipo === "guardacorpos" && !NA.has(r.status));
+  const filtered = rows.filter(r => (r.tipo === "guardacorpo" || r.tipo === "lajetecnica") && r.tipoGC === tipoGC && !NA.has(r.status));
 
   // ── contagens globais (excluindo NA/NV/-)
   const counts = {};
@@ -645,7 +647,9 @@ function detectTipo(fileName, rows){
   if(/cerâmica.*varanda|varanda.*cerâmica|mapeamento.*varanda/i.test(fn)) return "varanda";
   if(/som.cavo|mapeamento.*fvs.*cer|mapeamento.*cer.*apto/i.test(fn)) return "somcavo";
   if(/porta.*madeira|madeira.*porta/i.test(fn)) return "portas";
-  if(/guarda.corpo|gradil/i.test(fn)) return "guardacorpos";
+  if(/guarda.corpo/i.test(fn) && !/laje/i.test(fn)) return "guardacorpo";
+  if(/laje.t[eé]cnica|laje.tecnica/i.test(fn)) return "lajetecnica";
+  if(/guarda.corpo|gradil/i.test(fn)) return "guardacorpo";
   if(/forro.*acarton|acarton.*forro/i.test(fn)) return "forro_acartonado";
   if(/forro.*gesso|gesso.*forro/i.test(fn)) return "forro_gesso";
   if(/\b(ab|cd)\b/i.test(fn)) return "shaft";
@@ -659,7 +663,7 @@ function detectTipo(fileName, rows){
   if(/verifica.*passante|passante.*verifica/i.test(head)) return "passantes";
   if(/serviço.*esquadria|precedente.*esquadria/i.test(head)) return "esquadrias";
   if(/mapeamento.*porta.*madeira|porta.*madeira/i.test(head)) return "portas";
-  if(/guarda.corpo|gradil.*split/i.test(head)) return "guardacorpos";
+  if(/guarda.corpo|gradil.*split/i.test(head)) return "guardacorpo";
   if(/forro.*acartonado/i.test(head)) return "forro_acartonado";
   if(/forro.*gesso/i.test(head)) return "forro_gesso";
   const hasShaftData = rows.slice(0,10).some(r => {
@@ -873,7 +877,8 @@ function parseFile(fileName, csvText){
     case "varanda":          return parseCeramicaVaranda(rows, fileName);
     case "somcavo":          return parseSomCavo(rows, fileName);
     case "portas":           return parsePortas(rows, fileName);
-    case "guardacorpos":     return parseGuardaCorpos(rows, fileName);
+    case "guardacorpo":   return parseGuardaCorpos(rows, fileName, "guardacorpo");
+    case "lajetecnica":   return parseGuardaCorpos(rows, fileName, "lajetecnica");
     case "forro_acartonado": return parseForros(rows, fileName, "acartonado");
     case "forro_gesso":      return parseForros(rows, fileName, "gesso");
     case "esquadrias": {
@@ -885,7 +890,8 @@ function parseFile(fileName, csvText){
       // Tenta inferir pelo conteúdo
       const head = rows.slice(0,8).flat().join(" ");
       if(/porta.*madeira|madeira.*porta/i.test(head)) return parsePortas(rows, fileName);
-      if(/guarda.corpo|gradil/i.test(head)) return parseGuardaCorpos(rows, fileName);
+      if(/laje.t[eé]cnica|laje.tecnica/i.test(head)) return parseGuardaCorpos(rows, fileName, "lajetecnica");
+      if(/guarda.corpo|gradil/i.test(head)) return parseGuardaCorpos(rows, fileName, "guardacorpo");
       if(/forro.*acartonado/i.test(head)) return parseForros(rows, fileName, "acartonado");
       if(/forro.*gesso/i.test(head)) return parseForros(rows, fileName, "gesso");
       if(/serviço.*esquadria|precedente.*esquadria|esquadria/i.test(head)){
@@ -909,9 +915,14 @@ const CLASS = {
     labels:{ OK:"Completa",SMA:"Sem maçaneta/alisar",M:"Sem maçaneta",A:"Sem alisar",NI:"Não instalada",F:"Furto",FO:"Falta folha",NV:"N/V" },
     colors:{ OK:"#16a34a",SMA:"#f59e0b",M:"#ea580c",A:"#2563eb",NI:"#dc2626",F:"#b91c1c",FO:"#7c3aed",NV:"#94a3b8" }
   },
-  guardacorpos:{
-    ok:["OK"], warn:["NI","C","CM","CP","PC","GV","GA","S"], na:["NV"],
-    labels:{ OK:"Aplicado",NI:"Chapim não inst.",C:"Só chapim",CM:"Chapim marcado",CP:"Chapim perfurado",PC:"Pontaletes chumbados",GV:"Sem vidros",GA:"Arranhado",S:"Sujo",NV:"N/V" },
+  guardacorpo:{
+    ok:["OK"], warn:["NI","C","CM","CP","PC","GV","GA","S"], na:["NV","-"],
+    labels:{ OK:"Aplicado e completo",NI:"Chapim não inst.",C:"Só chapim",CM:"Chapim marcado",CP:"Chapim perfurado",PC:"Pontaletes chumbados",GV:"Sem vidros",GA:"Arranhado",S:"Sujo",NV:"N/V" },
+    colors:{ OK:"#16a34a",NI:"#dc2626",C:"#f59e0b",CM:"#ea580c",CP:"#2563eb",PC:"#0891b2",GV:"#7c3aed",GA:"#b91c1c",S:"#64748b",NV:"#94a3b8" }
+  },
+  lajetecnica:{
+    ok:["OK"], warn:["NI","C","CM","CP","PC","GV","GA","S"], na:["NV","-"],
+    labels:{ OK:"Gradil aplicado e completo",NI:"Chapim não inst.",C:"Só chapim",CM:"Chapim marcado",CP:"Chapim perfurado",PC:"Pontaletes chumbados",GV:"Sem vidros",GA:"Arranhado",S:"Sujo",NV:"N/V" },
     colors:{ OK:"#16a34a",NI:"#dc2626",C:"#f59e0b",CM:"#ea580c",CP:"#2563eb",PC:"#0891b2",GV:"#7c3aed",GA:"#b91c1c",S:"#64748b",NV:"#94a3b8" }
   },
   forros:{
@@ -1180,6 +1191,8 @@ export default function App(){
   const [somCavoTorreFilter, setSomCavoTorreFilter]     = useState("TODAS");
   const [forroSubTab, setForroSubTab]                   = useState("acartonado");
   const [forroTorreFilter, setForroTorreFilter]         = useState("TODAS");
+  const [gcSubTab, setGcSubTab]                         = useState("guardacorpo");
+  const [gcTorreFilter, setGcTorreFilter]               = useState("TODAS");
 
   const handleFile = useCallback(async e => {
     const files = Array.from(e.target.files || []);
@@ -1270,8 +1283,11 @@ export default function App(){
   const capData      = useMemo(() => calcTipo(scoped, "capiacos"),   [scoped]);
   const passData     = useMemo(() => calcTipo(scoped, "passantes"),  [scoped]);
   const esqData      = useMemo(() => calcEsquadrias(scoped),         [scoped]);
-  const portasData   = useMemo(() => calcPortas(scoped),             [scoped]);
-  const guardaData   = useMemo(() => calcGuardaCorpos(scoped),       [scoped]);
+  const portasData   = useMemo(() => calcPortas(scoped),                        [scoped]);
+  const guardaTorres = useMemo(() => ["TODAS", ...[...new Set(allRows.filter(r => r.tipo==="guardacorpo"||r.tipo==="lajetecnica").map(r=>r.torre).filter(Boolean))].sort()], [allRows]);
+  const guardaScoped = useMemo(() => gcTorreFilter === "TODAS" ? allRows : allRows.filter(r => r.torre === gcTorreFilter), [allRows, gcTorreFilter]);
+  const guardaDataGC = useMemo(() => calcGuardaCorpos(guardaScoped, "guardacorpo"), [guardaScoped]);
+  const guardaDataLT = useMemo(() => calcGuardaCorpos(guardaScoped, "lajetecnica"), [guardaScoped]);
   const forrosTorres = useMemo(() => ["TODAS", ...[...new Set(allRows.filter(r => r.tipo === "forros").map(r => r.torre).filter(Boolean))].sort()], [allRows]);
   const forrosScoped = useMemo(() => forroTorreFilter === "TODAS" ? allRows : allRows.filter(r => r.torre === forroTorreFilter), [allRows, forroTorreFilter]);
   const forrosData   = useMemo(() => calcForros(forrosScoped, forroSubTab), [forrosScoped, forroSubTab]);
@@ -1286,8 +1302,8 @@ export default function App(){
   const esqTotal    = esqData.esqTotal ?? Object.values(esqData.counts).reduce((a,b) => a+b,0);
   const portasOk    = portasData.ok;
   const portasTotal = portasData.total;
-  const guardaOk    = guardaData.ok;
-  const guardaTotal = guardaData.total;
+  const guardaOk    = (guardaDataGC.ok||0) + (guardaDataLT.ok||0);
+  const guardaTotal = (guardaDataGC.total||0) + (guardaDataLT.total||0);
   const forrosOk    = forrosData.ok;
   const forrosTotal = forrosData.total;
 
@@ -1311,7 +1327,7 @@ export default function App(){
     { id:"passantes",    label:"🔧 Passantes" },
     { id:"esquadrias",   label:"🪟 Esquadrias" },
     { id:"portas",       label:"🚪 Portas" },
-    { id:"guardacorpos", label:"🛡 Guarda-Corpos" },
+    { id:"guardacorpos", label:"🛡 G.C. e Laje Téc." },
     { id:"forros",       label:"🔲 Forros" },
     { id:"varanda",      label:"🟫 Cer. Varanda" },
     { id:"somcavo",      label:"🔊 Som Cavo" },
@@ -1421,144 +1437,169 @@ export default function App(){
                   )}
                 </div>}
 
-                {/* ─── GUARDA-CORPOS E GRADIL ─── */}
-                {planTab === "guardacorpos" && <div>
-                  {/* KPIs */}
-                  {guardaData.totalGeral > 0 && (
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginTop:20,marginBottom:4}}>
-                      <KPI label="Aplicados (OK)"   value={guardaData.totalOk}   sub={`${guardaData.pctGeral}% do total`} color={guardaData.pctGeral>=80?C.ok:guardaData.pctGeral>=50?C.warn:C.bad}/>
-                      <KPI label="Pendentes"         value={guardaData.totalProb} sub={`de ${guardaData.totalGeral} elementos`} color={guardaData.totalProb>0?C.bad:C.ok}/>
-                      <KPI label="Torres"            value={guardaData.byTorre.length} sub="com dados carregados" color={C.accent}/>
-                      <KPI label="Ambientes mapeados" value={guardaData.byAmbiente.length} sub="tipos distintos" color={C.purple}/>
-                    </div>
-                  )}
-
-                  {/* Progresso por torre */}
-                  {guardaData.byTorre.length > 0 && (
-                    <Box title={`Progresso por Torre — ${tL(torreFilter)}`}>
-                      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                        {guardaData.byTorre.map((t,i) => (
-                          <div key={i} style={{display:"flex",alignItems:"center",gap:12}}>
-                            <div style={{width:72,fontSize:13,color:C.white,fontWeight:"bold",flexShrink:0}}>Torre {t.torre}</div>
-                            <div style={{flex:1,background:"#0f172a",borderRadius:6,height:28,position:"relative",overflow:"hidden"}}>
-                              <div style={{width:`${t.pct}%`,background:t.pct>=80?C.ok:t.pct>=50?C.warn:C.bad,height:"100%",borderRadius:6,transition:"width .4s"}}/>
-                              <span style={{position:"absolute",right:10,top:5,fontSize:12,color:C.white,fontWeight:"bold"}}>{t.ok}/{t.total} ({t.pct}%)</span>
-                            </div>
-                            <div style={{width:120,fontSize:11,color:C.muted,flexShrink:0}}>
-                              {Object.entries(t.counts).filter(([k])=>k!=="OK").sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(" ")}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </Box>
-                  )}
-
-                  {/* Pareto por ambiente */}
-                  {guardaData.byAmbiente.length > 0 && (
-                    <Box title="Pendências por Ambiente (Pareto)">
-                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                        {guardaData.byAmbiente.map((a,i) => {
-                          const maxProb = guardaData.byAmbiente[0]?.prob || 1;
-                          return (
-                            <div key={i} style={{display:"flex",alignItems:"center",gap:10}}>
-                              <div style={{width:160,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{a.ambiente}</div>
-                              <div style={{flex:1,background:"#0f172a",borderRadius:4,height:26,position:"relative"}}>
-                                <div style={{width:`${(a.prob/maxProb)*100}%`,background:a.pct>=80?C.ok:a.pct>=50?C.warn:C.bad,height:"100%",borderRadius:4,transition:"width .4s"}}/>
-                                <span style={{position:"absolute",right:8,top:4,fontSize:11,color:C.white,fontWeight:"bold"}}>
-                                  {a.prob} pend. / {a.total} ({a.pct}% OK){a.topStatus?` — ${a.topStatus}`:""}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </Box>
-                  )}
-
-                  {/* Distribuição geral de status */}
-                  <Box title={`Distribuição de Status — ${tL(torreFilter)}`}>
-                    <BarChart counts={guardaData.counts} labels={CLASS.guardacorpos.labels} colors={CLASS.guardacorpos.colors}/>
-                  </Box>
-
-                  {/* Heatmap apto × ambiente */}
-                  {guardaData.heatmap.length > 0 && (() => {
-                    const allAmbs = [...new Set(guardaData.heatmap.flatMap(r => Object.keys(r.ambientes)))].sort();
-                    const SC = CLASS.guardacorpos.colors;
-                    const getColor = s => s==="-"||s==="NV"?"#1e293b":s==="OK"?C.ok:SC[s]||C.bad;
-                    return (
-                      <Box title="Mapa de Status — Apto × Ambiente">
-                        <div style={{overflowX:"auto"}}>
-                          <table style={{borderCollapse:"collapse",fontSize:11}}>
-                            <thead>
-                              <tr>
-                                <th style={{padding:"6px 10px",color:C.muted,textAlign:"left",background:C.card,position:"sticky",left:0,zIndex:1}}>Torre</th>
-                                <th style={{padding:"6px 10px",color:C.muted,textAlign:"left",background:C.card,position:"sticky",left:52,zIndex:1}}>Apto</th>
-                                {allAmbs.map(a => <th key={a} style={{padding:"4px 6px",color:C.muted,fontSize:10,textAlign:"center",whiteSpace:"nowrap",transform:"rotate(-30deg)",transformOrigin:"bottom left",height:64,verticalAlign:"bottom"}}>{a}</th>)}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {guardaData.heatmap.map((r,i) => (
-                                <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
-                                  <td style={{padding:"5px 10px",color:C.accent,fontWeight:"bold",fontSize:11,position:"sticky",left:0,background:i%2===0?C.bg:C.card}}>{r.torre}</td>
-                                  <td style={{padding:"5px 10px",color:C.white,fontWeight:"bold",fontSize:11,position:"sticky",left:52,background:i%2===0?C.bg:C.card}}>{r.apto}</td>
-                                  {allAmbs.map(a => {
-                                    const s = r.ambientes[a]||"—";
-                                    return (
-                                      <td key={a} style={{padding:"3px 4px",textAlign:"center"}}>
-                                        <div style={{background:getColor(s),borderRadius:4,padding:"3px 5px",fontSize:10,color:C.white,fontWeight:"bold",minWidth:28,textAlign:"center",opacity:s==="—"?0.15:1}}>
-                                          {s==="—"?"·":s}
-                                        </div>
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:8}}>
-                          {Object.entries(CLASS.guardacorpos.labels).map(([k,v]) => (
-                            <div key={k} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted}}>
-                              <div style={{width:14,height:14,borderRadius:3,background:CLASS.guardacorpos.colors[k]||C.muted}}/>
-                              <span><b style={{color:C.white}}>{k}</b> — {v}</span>
-                            </div>
+                {/* ─── GUARDA-CORPOS E LAJE TÉCNICA ─── */}
+                {planTab === "guardacorpos" && (() => {
+                  const gd = gcSubTab === "guardacorpo" ? guardaDataGC : guardaDataLT;
+                  const cl = CLASS[gcSubTab] || CLASS.guardacorpo;
+                  const titulo = gcSubTab === "guardacorpo" ? "Guarda-Corpo" : "Gradil / Laje Técnica";
+                  return (
+                    <div>
+                      {/* Sub-tabs + filtro torre */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginTop:16,marginBottom:4}}>
+                        <div style={{display:"flex",gap:3}}>
+                          {[{id:"guardacorpo",label:"🛡 Guarda-Corpo"},{id:"lajetecnica",label:"🏗 Gradil / Laje Técnica"}].map(st => (
+                            <button key={st.id} onClick={() => setGcSubTab(st.id)} style={{background:gcSubTab===st.id?C.blue:"transparent",color:gcSubTab===st.id?C.white:C.muted,border:`1px solid ${gcSubTab===st.id?C.blue:C.border}`,borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:gcSubTab===st.id?"bold":"normal",fontSize:13}}>
+                              {st.label}
+                            </button>
                           ))}
                         </div>
-                      </Box>
-                    );
-                  })()}
-
-                  {/* Tabela por apartamento */}
-                  {guardaData.byApto.length > 0 && (
-                    <Box title={`Por Apartamento — ${tL(torreFilter)}`}>
-                      <div style={{overflowX:"auto"}}>
-                        <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
-                          <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Total"/><TH c="OK"/><TH c="Pend."/><TH c="% OK"/><TH c="Status pendentes"/><TH c="Ambientes pend."/></tr></thead>
-                          <tbody>{guardaData.byApto.map((r,i) => (
-                            <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
-                              <TD c={r.torre} color={C.accent} bold/>
-                              <TD c={r.apto} bold/>
-                              <TD c={r.pav}/>
-                              <TD c={r.total}/>
-                              <TD c={r.ok} color={C.ok}/>
-                              <TD c={r.prob} color={r.prob>0?C.bad:C.ok}/>
-                              <TD bold color={r.pct>=80?C.ok:r.pct>=50?C.warn:C.bad}>{r.pct}%</TD>
-                              <TD c={r.statuses||"—"} color={r.statuses?C.warn:C.muted}/>
-                              <TD c={r.ambProb||"—"} color={r.ambProb?C.orange:C.muted}/>
-                            </tr>
-                          ))}</tbody>
-                        </table>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:11,color:C.muted}}>TORRE</span>
+                          <select value={gcTorreFilter} onChange={e => setGcTorreFilter(e.target.value)} style={selStyle}>
+                            {guardaTorres.map(t => <option key={t} value={t}>{tL(t)}</option>)}
+                          </select>
+                        </div>
                       </div>
-                    </Box>
-                  )}
 
-                  {guardaData.totalGeral === 0 && (
-                    <div style={{textAlign:"center",padding:"40px",color:C.muted}}>
-                      <div style={{fontSize:40,marginBottom:12}}>🛡</div>
-                      <div>Carregue o arquivo de mapeamento de guarda-corpos.</div>
+                      {/* KPIs */}
+                      {gd.totalGeral > 0 && (
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(155px,1fr))",gap:12,marginBottom:4}}>
+                          <KPI label="Aplicados (OK)"    value={gd.totalOk}   sub={`${gd.pctGeral}% do total`} color={gd.pctGeral>=80?C.ok:gd.pctGeral>=50?C.warn:C.bad}/>
+                          <KPI label="Pendentes"          value={gd.totalProb} sub={`de ${gd.totalGeral} elementos`} color={gd.totalProb>0?C.bad:C.ok}/>
+                          <KPI label="Torres"             value={gd.byTorre.length} sub="com dados" color={C.accent}/>
+                          <KPI label="Ambientes distintos" value={gd.byAmbiente.length} sub="tipos mapeados" color={C.purple}/>
+                        </div>
+                      )}
+
+                      {/* Progresso por torre */}
+                      {gd.byTorre.length > 0 && (
+                        <Box title={`Progresso por Torre — ${titulo} — ${tL(gcTorreFilter)}`}>
+                          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                            {gd.byTorre.map((t,i) => (
+                              <div key={i} style={{display:"flex",alignItems:"center",gap:12}}>
+                                <div style={{width:72,fontSize:13,color:C.white,fontWeight:"bold",flexShrink:0}}>Torre {t.torre}</div>
+                                <div style={{flex:1,background:"#0f172a",borderRadius:6,height:28,position:"relative",overflow:"hidden"}}>
+                                  <div style={{width:`${t.pct}%`,background:t.pct>=80?C.ok:t.pct>=50?C.warn:C.bad,height:"100%",borderRadius:6,transition:"width .4s"}}/>
+                                  <span style={{position:"absolute",right:10,top:5,fontSize:12,color:C.white,fontWeight:"bold"}}>{t.ok}/{t.total} ({t.pct}%)</span>
+                                </div>
+                                <div style={{width:130,fontSize:11,color:C.muted,flexShrink:0}}>
+                                  {Object.entries(t.counts).filter(([k])=>k!=="OK").sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}:${v}`).join(" ")}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </Box>
+                      )}
+
+                      {/* Pareto por ambiente */}
+                      {gd.byAmbiente.length > 0 && (
+                        <Box title={`Pendências por Ambiente — ${titulo}`}>
+                          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                            {gd.byAmbiente.map((a,i) => {
+                              const maxProb = gd.byAmbiente[0]?.prob || 1;
+                              return (
+                                <div key={i} style={{display:"flex",alignItems:"center",gap:10}}>
+                                  <div style={{width:180,fontSize:12,color:C.white,textAlign:"right",flexShrink:0}}>{a.ambiente}</div>
+                                  <div style={{flex:1,background:"#0f172a",borderRadius:4,height:26,position:"relative"}}>
+                                    <div style={{width:`${(a.prob/maxProb)*100}%`,background:a.pct>=80?C.ok:a.pct>=50?C.warn:C.bad,height:"100%",borderRadius:4,transition:"width .4s"}}/>
+                                    <span style={{position:"absolute",right:8,top:4,fontSize:11,color:C.white,fontWeight:"bold"}}>
+                                      {a.prob} pend. / {a.total} ({a.pct}% OK){a.topStatus?` — ${a.topStatus}`:""}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </Box>
+                      )}
+
+                      {/* Distribuição geral */}
+                      {gd.totalGeral > 0 && (
+                        <Box title={`Distribuição de Status — ${titulo} — ${tL(gcTorreFilter)}`}>
+                          <BarChart counts={gd.counts} labels={cl.labels} colors={cl.colors}/>
+                        </Box>
+                      )}
+
+                      {/* Heatmap apto × ambiente */}
+                      {gd.heatmap.length > 0 && (() => {
+                        const allAmbs = [...new Set(gd.heatmap.flatMap(r => Object.keys(r.ambientes)))].sort();
+                        const getColor = s => s==="-"||s==="NV"?"#1e293b":s==="OK"?C.ok:cl.colors[s]||C.bad;
+                        return (
+                          <Box title={`Mapa de Status — ${titulo} — Apto × Ambiente`}>
+                            <div style={{overflowX:"auto"}}>
+                              <table style={{borderCollapse:"collapse",fontSize:11}}>
+                                <thead>
+                                  <tr>
+                                    <th style={{padding:"6px 10px",color:C.muted,textAlign:"left",background:C.card,position:"sticky",left:0,zIndex:1}}>Torre</th>
+                                    <th style={{padding:"6px 10px",color:C.muted,textAlign:"left",background:C.card,position:"sticky",left:52,zIndex:1}}>Apto</th>
+                                    {allAmbs.map(a => <th key={a} style={{padding:"4px 6px",color:C.muted,fontSize:10,textAlign:"center",whiteSpace:"nowrap",transform:"rotate(-30deg)",transformOrigin:"bottom left",height:64,verticalAlign:"bottom"}}>{a}</th>)}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {gd.heatmap.map((r,i) => (
+                                    <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
+                                      <td style={{padding:"5px 10px",color:C.accent,fontWeight:"bold",fontSize:11,position:"sticky",left:0,background:i%2===0?C.bg:C.card}}>{r.torre}</td>
+                                      <td style={{padding:"5px 10px",color:C.white,fontWeight:"bold",fontSize:11,position:"sticky",left:52,background:i%2===0?C.bg:C.card}}>{r.apto}</td>
+                                      {allAmbs.map(a => {
+                                        const s = r.ambientes[a]||"—";
+                                        return (
+                                          <td key={a} style={{padding:"3px 4px",textAlign:"center"}}>
+                                            <div style={{background:getColor(s),borderRadius:4,padding:"3px 5px",fontSize:10,color:C.white,fontWeight:"bold",minWidth:28,textAlign:"center",opacity:s==="—"?0.15:1}}>
+                                              {s==="—"?"·":s}
+                                            </div>
+                                          </td>
+                                        );
+                                      })}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:8}}>
+                              {Object.entries(cl.labels).map(([k,v]) => (
+                                <div key={k} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted}}>
+                                  <div style={{width:14,height:14,borderRadius:3,background:cl.colors[k]||C.muted}}/>
+                                  <span><b style={{color:C.white}}>{k}</b> — {v}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </Box>
+                        );
+                      })()}
+
+                      {/* Tabela por apartamento */}
+                      {gd.byApto.length > 0 && (
+                        <Box title={`Por Apartamento — ${titulo} — ${tL(gcTorreFilter)}`}>
+                          <div style={{overflowX:"auto"}}>
+                            <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+                              <thead><tr><TH c="Torre"/><TH c="Apto"/><TH c="Pav"/><TH c="Total"/><TH c="OK"/><TH c="Pend."/><TH c="% OK"/><TH c="Status pendentes"/><TH c="Ambientes pend."/></tr></thead>
+                              <tbody>{gd.byApto.map((r,i) => (
+                                <tr key={i} style={{background:i%2===0?"transparent":C.row}}>
+                                  <TD c={r.torre} color={C.accent} bold/>
+                                  <TD c={r.apto} bold/>
+                                  <TD c={r.pav}/>
+                                  <TD c={r.total}/>
+                                  <TD c={r.ok} color={C.ok}/>
+                                  <TD c={r.prob} color={r.prob>0?C.bad:C.ok}/>
+                                  <TD bold color={r.pct>=80?C.ok:r.pct>=50?C.warn:C.bad}>{r.pct}%</TD>
+                                  <TD c={r.statuses||"—"} color={r.statuses?C.warn:C.muted}/>
+                                  <TD c={r.ambProb||"—"} color={r.ambProb?C.orange:C.muted}/>
+                                </tr>
+                              ))}</tbody>
+                            </table>
+                          </div>
+                        </Box>
+                      )}
+
+                      {gd.totalGeral === 0 && (
+                        <div style={{textAlign:"center",padding:"40px",color:C.muted}}>
+                          <div style={{fontSize:40,marginBottom:12}}>{gcSubTab==="guardacorpo"?"🛡":"🏗"}</div>
+                          <div>Carregue o arquivo de {gcSubTab==="guardacorpo"?"mapeamento de guarda-corpos":"mapeamento de lajes técnicas"}.</div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>}
+                  );
+                })()}
 
                 {/* ─── FORROS ─── */}
                 {planTab === "forros" && <div>
