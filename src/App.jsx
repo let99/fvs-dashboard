@@ -537,7 +537,35 @@ const GRANITO_STATUS_MAP = {
 
 function parseGranito(rows, fileName, tipoGranito){
   const result = [];
-  // Detecta blocos APTO-TORRE na linha de cabeçalho (mesma lógica do guardacorpos)
+
+  // ── Extrai totais por torre da linha TOTAL DE ELEMENTOS da legenda ────────
+  const totaisTorre = {};
+  const legendHeadIdx = rows.findIndex(r => {
+    const flat = r.join(" ");
+    return /TORRE [AB]/i.test(flat) && r.some(c => /^LEGENDA$/i.test(san(c)));
+  });
+  if(legendHeadIdx !== -1){
+    const headRow = rows[legendHeadIdx];
+    const torreCols = [];
+    headRow.forEach((cell, ci) => {
+      const m = san(fix(cell)).match(/^TORRE ([A-D])$/i);
+      if(m) torreCols.push({ torre: m[1].toUpperCase(), col: ci });
+    });
+    // Procura linha TOTAL DE ELEMENTOS
+    for(let i = legendHeadIdx+1; i < Math.min(legendHeadIdx+20, rows.length); i++){
+      if(/TOTAL\s+DE\s+ELEMENTOS/i.test(rows[i].join(" "))){
+        torreCols.forEach(({ torre, col }) => {
+          for(let x = col; x < col+5 && x < rows[i].length; x++){
+            const n = parseInt(san(rows[i][x]));
+            if(!isNaN(n) && n > 0){ totaisTorre[torre] = n; break; }
+          }
+        });
+        break;
+      }
+    }
+  }
+
+  // ── Parser linha a linha por apto/ambiente ─────────────────────────────
   const hIdxs = rows.reduce((acc, r, i) => {
     if(r.some(c => /^apto$/i.test(san(c))) && r.some(c => /^torre$/i.test(san(c)))) acc.push(i);
     return acc;
@@ -578,28 +606,41 @@ function parseGranito(rows, fileName, tipoGranito){
       }
     }
   }
+
+  result._totaisTorre = Object.keys(totaisTorre).length > 0 ? totaisTorre : null;
   return result;
 }
 
-function calcGranito(rows, tipoGranito){
-  const NA = new Set(["-","NV"]);
-  const filtered = rows.filter(r => r.tipo === "granito" && r.tipoGranito === tipoGranito && !NA.has(r.status));
+function calcGranito(rows, tipoGranito, totaisTorrePorTipo){
+  const NA  = new Set(["-","NV"]);
+  // todos os registros (inclusive NV, para contagem de verificados)
+  const all      = rows.filter(r => r.tipo === "granito" && r.tipoGranito === tipoGranito);
+  const filtered = all.filter(r => !NA.has(r.status));   // exclui NA/NV para counts de status
 
   const counts = {};
   filtered.forEach(r => { const s = r.status||"?"; counts[s]=(counts[s]||0)+1; });
 
+  // Totais por torre: usa os da legenda quando disponíveis
+  const totaisLegenda = totaisTorrePorTipo || {};
+
   const byTorreMap = {};
-  filtered.forEach(r => {
+  all.forEach(r => {
     const t = r.torre||"?";
-    if(!byTorreMap[t]) byTorreMap[t] = { torre:t, counts:{}, ok:0, prob:0, total:0 };
+    if(!byTorreMap[t]) byTorreMap[t] = { torre:t, counts:{}, ok:0, prob:0, verif:0, nv:0 };
     const s = r.status||"?";
+    if(s === "NV"){ byTorreMap[t].nv++; return; }
+    if(s === "-") return;
     byTorreMap[t].counts[s] = (byTorreMap[t].counts[s]||0)+1;
-    byTorreMap[t].total++;
+    byTorreMap[t].verif++;
     if(s==="OK") byTorreMap[t].ok++;
     else if(GRANITO_PROB.has(s)) byTorreMap[t].prob++;
   });
   const byTorre = Object.values(byTorreMap)
-    .map(x => ({ ...x, pct: x.total ? Math.round(x.ok/x.total*100) : 0 }))
+    .map(x => {
+      // Total = da legenda se disponível, senão total verificado
+      const total = totaisLegenda[x.torre] ?? x.verif;
+      return { ...x, total, pct: total ? Math.round(x.ok/total*100) : 0 };
+    })
     .sort((a,b) => a.torre.localeCompare(b.torre));
 
   const byAmbMap = {};
@@ -643,17 +684,18 @@ function calcGranito(rows, tipoGranito){
     heatmap[key].ambientes[r.ambiente] = r.status;
   });
 
-  const totalOk   = filtered.filter(r=>r.status==="OK").length;
-  const totalProb = filtered.filter(r=>GRANITO_PROB.has(r.status)).length;
-  const totalGeral= filtered.length;
+  // Totais gerais usando legenda
+  const totalOk    = filtered.filter(r=>r.status==="OK").length;
+  const totalProb  = filtered.filter(r=>GRANITO_PROB.has(r.status)).length;
+  const totalGeral = byTorre.reduce((s,t) => s + t.total, 0) || filtered.length;
+  const pctGeral   = totalGeral ? Math.round(totalOk/totalGeral*100) : 0;
 
   return {
     counts, byTorre, byAmbiente, byApto,
     heatmap: Object.values(heatmap).sort((a,b)=>a.torre.localeCompare(b.torre)||Number(String(a.apto).match(/\d+/)?.[0]||0)-Number(String(b.apto).match(/\d+/)?.[0]||0)),
-    totalOk, totalProb, totalGeral,
-    pctGeral: totalGeral ? Math.round(totalOk/totalGeral*100) : 0,
-    total: Object.values(counts).reduce((a,b)=>a+b,0),
-    ok: counts["OK"]||0,
+    totalOk, totalProb, totalGeral, pctGeral,
+    total: byTorre.reduce((s,t)=>s+t.total,0) || filtered.length,
+    ok: totalOk,
   };
 }
 
@@ -1346,6 +1388,7 @@ export default function App(){
   const [gcTorreFilter, setGcTorreFilter]               = useState("TODAS");
   const [granitoSubTab, setGranitoSubTab]               = useState("bancada");
   const [granitoTorreFilter, setGranitoTorreFilter]     = useState("TODAS");
+  const [granitoTotais, setGranitoTotais]               = useState({});
 
   const handleFile = useCallback(async e => {
     const files = Array.from(e.target.files || []);
@@ -1353,7 +1396,7 @@ export default function App(){
     setAllRows([]); setFvsRows([]); setVarandaRows([]); setSomCavoRows([]); setSomCavoSummary({}); setErrors([]);
     setFileNames(files.map(f => f.name));
     setStatus("Processando...");
-    let planilhas = [], fvs = [], varanda = [], somcavo = [], scSummary = {}, errs = [];
+    let planilhas = [], fvs = [], varanda = [], somcavo = [], scSummary = {}, granitoTotaisAcc = {}, errs = [];
 
     for(const file of files){
       try {
@@ -1361,6 +1404,11 @@ export default function App(){
         if(ext === "csv"){
           const text = await file.text();
           const parsed = parseFile(file.name, text);
+          // Captura totais de granito da legenda
+          if(parsed._totaisTorre){
+            const tipoG = parsed.find(r=>r.tipo==="granito")?.tipoGranito;
+            if(tipoG) granitoTotaisAcc[tipoG] = { ...(granitoTotaisAcc[tipoG]||{}), ...parsed._totaisTorre };
+          }
           const sc = parsed.filter(r => r.tipo_doc === "somcavo");
           const va = parsed.filter(r => r.tipo_doc === "varanda");
           const pl = parsed.filter(r => r.tipo_doc !== "somcavo" && r.tipo_doc !== "varanda");
@@ -1388,6 +1436,10 @@ export default function App(){
                 if(!scSummary[torre]) scSummary[torre] = { verif:0, reprov:0, total:220, nv:0, pctPedras:0 };
                 scSummary[torre] = { ...scSummary[torre], ...vals };
               });
+            }
+            if(parsed._totaisTorre){
+              const tipoG = parsed.find(r=>r.tipo==="granito")?.tipoGranito;
+              if(tipoG) granitoTotaisAcc[tipoG] = { ...(granitoTotaisAcc[tipoG]||{}), ...parsed._totaisTorre };
             }
             somcavo = [...somcavo, ...sc];
             varanda = [...varanda, ...va];
@@ -1423,7 +1475,7 @@ export default function App(){
     }
 
     setAllRows(planilhas); setFvsRows(fvs); setVarandaRows(varanda);
-    setSomCavoRows(somcavo); setSomCavoSummary(scSummary); setErrors(errs);
+    setSomCavoRows(somcavo); setSomCavoSummary(scSummary); setGranitoTotais(granitoTotaisAcc); setErrors(errs);
     const total = planilhas.length + fvs.length + varanda.length + somcavo.length;
     setStatus(`${files.length} arquivo(s). ${planilhas.length} registros planilha + ${fvs.length} FVS + ${varanda.length} varanda + ${somcavo.length} som cavo. Total: ${total}`);
     if(fvs.length > 0 && planilhas.length === 0) setMainTab("fvs");
@@ -1443,9 +1495,9 @@ export default function App(){
   const guardaDataLT = useMemo(() => calcGuardaCorpos(guardaScoped, "lajetecnica"), [guardaScoped]);
   const granitoTorres  = useMemo(() => ["TODAS", ...[...new Set(allRows.filter(r => r.tipo==="granito").map(r=>r.torre).filter(Boolean))].sort()], [allRows]);
   const granitoScoped  = useMemo(() => granitoTorreFilter === "TODAS" ? allRows : allRows.filter(r => r.torre === granitoTorreFilter), [allRows, granitoTorreFilter]);
-  const granitoBancada = useMemo(() => calcGranito(granitoScoped, "bancada"),  [granitoScoped]);
-  const granitoChapim  = useMemo(() => calcGranito(granitoScoped, "chapin"),   [granitoScoped]);
-  const granitoSoleira = useMemo(() => calcGranito(granitoScoped, "soleira"),  [granitoScoped]);
+  const granitoBancada = useMemo(() => calcGranito(granitoScoped, "bancada",  granitoTotais["bancada"]),  [granitoScoped, granitoTotais]);
+  const granitoChapim  = useMemo(() => calcGranito(granitoScoped, "chapin",   granitoTotais["chapin"]),   [granitoScoped, granitoTotais]);
+  const granitoSoleira = useMemo(() => calcGranito(granitoScoped, "soleira",  granitoTotais["soleira"]),  [granitoScoped, granitoTotais]);
   const forrosTorres = useMemo(() => ["TODAS", ...[...new Set(allRows.filter(r => r.tipo === "forros").map(r => r.torre).filter(Boolean))].sort()], [allRows]);
   const forrosScoped = useMemo(() => forroTorreFilter === "TODAS" ? allRows : allRows.filter(r => r.torre === forroTorreFilter), [allRows, forroTorreFilter]);
   const forrosData   = useMemo(() => calcForros(forrosScoped, forroSubTab), [forrosScoped, forroSubTab]);
